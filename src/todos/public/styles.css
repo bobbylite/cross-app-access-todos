@@ -1,0 +1,403 @@
+/* The todos app. Deliberately looks like an app, not like the protocol console next
+   to it — the contrast is the point when both are on screen. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --line: #e3e6ea;
+  --text: #16191d;
+  --muted: #6b7480;
+  --accent: #3b5bdb;
+  --agent: #7048e8;
+  --high: #e03131;
+  --normal: #1971c2;
+  --low: #868e96;
+  --done: #2f9e44;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --card: #1c2027;
+    --line: #2b313a;
+    --text: #e8ecf1;
+    --muted: #949eab;
+    --accent: #748ffc;
+    --agent: #b197fc;
+    --high: #ff8787;
+    --normal: #74c0fc;
+    --low: #909aa5;
+    --done: #69db7c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.55 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.4rem 1.75rem 1rem;
+  flex-wrap: wrap;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.sub {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  max-width: 60ch;
+}
+
+.head-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.live {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.session {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---- compose ------------------------------------------------------------- */
+
+.compose {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+/* `display: flex` above outranks the user-agent rule for [hidden], so hiding the form
+   from JavaScript needs saying explicitly. */
+.compose[hidden] {
+  display: none;
+}
+
+.compose input[type="text"] {
+  flex: 1 1 22rem;
+}
+
+.compose input,
+.compose select,
+.compose button {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+}
+
+.compose input:focus-visible,
+.compose select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.compose button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  padding-inline: 1.1rem;
+  font-weight: 500;
+}
+
+.compose button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hint {
+  margin: 0 0 1.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  max-width: 78ch;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.dot.on {
+  background: var(--done);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--done) 20%, transparent);
+}
+
+.dot.off {
+  background: var(--high);
+}
+
+/* ---- people ------------------------------------------------------------- */
+
+.people {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1.75rem 1rem;
+  flex-wrap: wrap;
+}
+
+.person {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.person:hover {
+  border-color: var(--muted);
+}
+
+.person[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+}
+
+.person .count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+}
+
+/* ---- board -------------------------------------------------------------- */
+
+main {
+  padding: 0 1.75rem 3rem;
+}
+
+.who {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.who h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.who .idp {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.tag-jit {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.group-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin: 1.4rem 0 0.5rem;
+  font-weight: 600;
+}
+
+.todo {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.15rem 0.8rem;
+  align-items: start;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.todo.just-changed {
+  animation: flash 1.6s ease-out;
+}
+
+@keyframes flash {
+  from {
+    border-color: var(--agent);
+    background: color-mix(in srgb, var(--agent) 14%, var(--card));
+  }
+  to {
+    border-color: var(--line);
+    background: var(--card);
+  }
+}
+
+.check {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  margin-top: 0.22rem;
+  grid-row: span 2;
+  padding: 0;
+  background: none;
+}
+
+button.check {
+  cursor: pointer;
+}
+
+button.check:hover {
+  border-color: var(--done);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--done) 18%, transparent);
+}
+
+button.check:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.todo.done .check {
+  border-color: var(--done);
+  background: var(--done);
+}
+
+.title {
+  font-weight: 500;
+}
+
+.todo.done .title {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.meta {
+  grid-column: 2;
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.notes {
+  grid-column: 2;
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.pri {
+  font-weight: 600;
+}
+
+.pri-high {
+  color: var(--high);
+}
+
+.pri-normal {
+  color: var(--normal);
+}
+
+.pri-low {
+  color: var(--low);
+}
+
+/* The two doors, told apart at a glance. */
+.by-agent,
+.by-user {
+  grid-row: span 2;
+  align-self: start;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.by-agent {
+  background: color-mix(in srgb, var(--agent) 16%, transparent);
+  color: var(--agent);
+}
+
+.by-user {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.tally {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.id {
+  font-family: var(--mono);
+}
+
+.empty {
+  color: var(--muted);
+}
+
+footer {
+  padding: 0 1.75rem 2rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: var(--mono);
+}

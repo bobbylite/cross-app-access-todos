@@ -1,0 +1,321 @@
+# Cross App Access — a real Resource AS and MCP server
+
+A working implementation of the receiving half of
+[Cross App Access](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-identity-assertion-authz-grant):
+a **Resource Authorization Server** that accepts an Identity Assertion JWT Authorization
+Grant (ID-JAG) from PingFederate and exchanges it for its own access token, a **todos MCP
+server** that only accepts the tokens that Resource AS issues, and the **todos application
+itself** — a real database with a UI, so the agent's writes land somewhere you can see.
+
+Nothing here is simulated. Signatures are verified against PingFederate's live JWKS, the
+tokens are real RS256 JWTs, the records are real rows, and every rejection is a real
+rejection.
+
+> Two sibling repos tell this story as an animation —
+> `cross-app-access-tour` and `identity-chaining-demo` both generate inert JWTs in the
+> browser and make no network calls. This one is the implementation.
+
+## Why build the Resource AS rather than point at a product
+
+Because you can step through it. Every rule in §4.4.1 of the draft is a separate,
+individually logged check, in spec order, in one file you can put on a screen — "here's
+where we check `typ`", "here's where we bind `client_id` to stop a replay", "here's the
+authorization decision we make independently of whatever PingFederate granted".
+
+## Quick start
+
+Requires **Node 22.5+**. The todos database uses the built-in `node:sqlite`, which is
+still behind `--experimental-sqlite` on Node 22 — the npm scripts pass that flag for you,
+so there is no native module to compile and nothing to install for it.
+
+```bash
+npm install
+```
+
+```bash
+cp .env.example .env
+```
+
+Fill in `.env` (see [Configuration](#configuration)), then:
+
+```bash
+npm run dev
+```
+
+That starts two listeners in one process:
+
+| | |
+| --- | --- |
+| Resource AS | `http://localhost:8081` — `POST /token`, metadata, JWKS |
+| Live console | `http://localhost:8081/console` — the validation trace |
+| Todos MCP server | `http://localhost:8082/mcp` |
+| Todos app | `http://localhost:8082/app` — the records themselves |
+
+Then import both files in `postman/` and run the folders top to bottom.
+
+For a walkthrough, put the console and the todos app side by side: the left shows the ten
+checks passing, the right shows the row appearing.
+
+## The flow
+
+```
+Postman ──1── PingFederate            get an ID token
+        ──2── PingFederate            token exchange → ID-JAG   (aud: the Resource AS)
+        ──3── Resource AS  /token     ID-JAG → access token     (aud: the MCP server)
+        ──4── MCP server   /mcp       tools/call with the access token
+```
+
+Steps 3 and 4 are what this repo implements.
+
+## What `POST /token` actually does
+
+`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `assertion=<the ID-JAG>`, plus
+client authentication. Each step logs one line to stdout and to the console.
+
+| # | Check | Where |
+| --- | --- | --- |
+| 1 | Client authentication against the registry | [clients.ts](src/resource-as/clients.ts) |
+| 2 | RS256 signature against PingFederate's JWKS, and the `iss` it claims | [validateIdJag.ts](src/resource-as/validateIdJag.ts) |
+| 3 | `typ` header is exactly `oauth-id-jag+jwt` | [validateIdJag.ts](src/resource-as/validateIdJag.ts) |
+| 4 | `aud` matches our issuer identifier, exact string | [validateIdJag.ts](src/resource-as/validateIdJag.ts) |
+| 5 | `client_id` claim matches the authenticated client | [validateIdJag.ts](src/resource-as/validateIdJag.ts) |
+| 6 | `exp` / `nbf` / `iat` freshness | [validateIdJag.ts](src/resource-as/validateIdJag.ts) |
+| 6b | `jti` has not been redeemed before | [replay.ts](src/resource-as/replay.ts) |
+| 7 | Resolve `sub` to a local user, JIT-provisioning if new | [subjects.ts](src/resource-as/subjects.ts) |
+| 8 | Local policy on `resource` / `scope` / `authorization_details` | [policy.ts](src/resource-as/policy.ts) |
+| 9 | Mint our own access token | [issueToken.ts](src/resource-as/issueToken.ts) |
+| 10 | Respond per §4.4.2 | [tokenEndpoint.ts](src/resource-as/tokenEndpoint.ts) |
+
+Three of these are worth pausing on during a walkthrough.
+
+**Step 3** is the one people skip. PingFederate signs ID tokens, access tokens and logout
+tokens with the same key. `typ` is the only thing that says *this* JWT is meant to be
+redeemed at a token endpoint. Accepting an ID token here would be a serious confusion
+bug, and RFC 8725 exists because that bug is common.
+
+**Step 6b** is an addition to the draft's explicit list, not a departure from it — `jti`
+is a required claim, and remembering it until `exp` makes redemption single-use. Capture
+an ID-JAG in flight and it is worth nothing once the legitimate client has spent it.
+
+**Step 8** is the point of the whole exercise. PingFederate said who the user is and
+which client is asking. It did not decide what this server hands out. Granted scope is
+the *intersection* of what was requested and what policy allows — ask for `todos.admin`
+and it simply doesn't come back, and the `scope` in the response visibly differs from the
+`scope` in the assertion.
+
+## The two audiences
+
+The single most likely source of a confusing failure. These are different values:
+
+| Value | Set by | Lands in |
+| --- | --- | --- |
+| `RESOURCE_AS_ISSUER`, e.g. `http://localhost:8081` | PingFederate's `audience` on the token exchange | `aud` of the **ID-JAG** |
+| `MCP_RESOURCE`, e.g. `http://localhost:8082/mcp` | this server's policy | `aud` of the **access token** |
+
+Step 4 compares `aud` as an exact string. A trailing slash, or `http` where PingFederate
+has `https`, fails there — and the failure looks like a signature problem if you aren't
+watching the console. The authoritative value is served at
+`http://localhost:8081/.well-known/oauth-authorization-server`; compare it against
+PingFederate's registered audience character for character.
+
+The audience changing between the two tokens is what makes "this token works nowhere
+else" demonstrable rather than merely asserted. The MCP server rejects any token whose
+`aud` isn't itself, even one this Resource AS signed.
+
+## PingFederate prerequisites
+
+PingFederate 13.1+ supports `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`.
+
+- A client permitted to use token exchange with that requested token type.
+- Its `audience` for this exchange registered as **exactly** `RESOURCE_AS_ISSUER`.
+- The same `client_id` registered here as `CLIENT_ID`, with a secret — otherwise step 5
+  rejects the redemption by design.
+
+**PingFederate does not put a `kid` on the ID-JAGs it issues** — it uses `x5t`, the
+certificate thumbprint, instead. Both are legal; only `kid` is what a JWKS lookup keys on,
+so a JWKS holding several RS256 keys becomes ambiguous and the ordinary path has nothing
+to resolve. Step 2 falls back to trying every RS256 key PF publishes and accepts the
+assertion if any one verifies it. That admits nothing extra: a signature either verifies
+under a key PF advertises or it doesn't.
+
+**One thing that surprises people:** RFC 8693 returns the ID-JAG in the `access_token`
+field of the token-exchange response, not in a field named after its type. Check
+`issued_token_type` to confirm you actually got an ID-JAG. The Postman collection asserts
+this for you.
+
+## Configuration
+
+Everything lives in `.env`; see [.env.example](.env.example) for the annotated list.
+`config.ts` validates at boot and names anything missing rather than failing later.
+
+| Variable | Notes |
+| --- | --- |
+| `PF_ISSUER` | PingFederate issuer, no trailing slash |
+| `PF_JWKS_URI` | Optional — otherwise read from PF's discovery document at boot |
+| `RESOURCE_AS_ISSUER` | Our issuer identifier. **This is the `aud` PingFederate must use.** |
+| `MCP_RESOURCE` | Canonical URI of the MCP server, including the `/mcp` path |
+| `CLIENT_ID` / `CLIENT_SECRET` | The client allowed to redeem ID-JAGs here |
+| `ALLOWED_SCOPES` | What policy is willing to grant |
+| `PF_SIGNING_CERTS` | Optional — IdP certificates trusted out of band, when PF signs ID-JAGs with a key it doesn't publish |
+| `TODOS_DB_PATH` | Optional — defaults to `./data/todos.db`; `:memory:` for a throwaway |
+
+The RS256 key pair for our own access tokens is generated on first run into `keys/`
+(gitignored) and reused after that, so a restart mid-walkthrough doesn't invalidate a
+token already sitting in a Postman environment.
+
+## The MCP server
+
+Standard OAuth 2.1 resource server behaviour, per the
+[MCP authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization):
+
+- Token validation is **local** — same key, no network call to the authorization server.
+- Signature, `iss`, `aud`, and `exp` are all checked; `aud` must be this server.
+- No token → `401` with `WWW-Authenticate: Bearer resource_metadata="…"`.
+- Missing scope → `403 insufficient_scope`, naming the scope, at the HTTP layer rather
+  than as a tool result that happens to say no.
+- `/.well-known/oauth-protected-resource/mcp` (RFC 9728) advertises this Resource AS.
+  Note the shape: the well-known segment goes *between* host and path.
+
+Five tools — `list_todos`, `get_todo_summary`, `create_todo`, `complete_todo`,
+`update_todo` — each gated on scope and scoped to the caller's subject. The user is not a
+parameter on any of them; it comes from the token and is applied in the SQL, so a caller
+cannot reach someone else's records even by guessing an id.
+
+### It runs stateless, on purpose
+
+`sessionIdGenerator: undefined` means no `initialize` handshake and no `Mcp-Session-Id`
+to echo back, so every call is one self-contained POST with a bearer token. That is what
+makes the flow drivable from Postman. Requests need
+`Accept: application/json, text/event-stream` — the transport requires both media types.
+
+## Postman
+
+`postman/cross-app-access.postman_collection.json` and the matching environment.
+
+Folders 1–3 are the happy path and run top to bottom in one click; each request captures
+what the next one needs. Folder 4 is the rejections, and each one stops the pipeline at a
+different step:
+
+| Request | Stops at | Because |
+| --- | --- | --- |
+| 4a tampered payload | step 2 | the signature no longer covers the payload |
+| 4b wrong client | step 1 | that client isn't registered here |
+| 4c replay | step 6b | the `jti` was already spent |
+| 4d/4e wrong audience | step 4, or at PF | the assertion was addressed elsewhere |
+| 4f under-scoped token | MCP, 403 | `todos.write` was never granted |
+| 4g no token | MCP, 401 | and the 401 says where to get one |
+
+Run them with the console open — the failing step is the one in red.
+
+## Verification
+
+```bash
+npm run check
+```
+
+Typechecks, then boots both listeners on throwaway ports against an in-memory database and
+runs 41 assertions with no network access and no PingFederate:
+
+- the three discovery documents, and whether they agree with each other
+- every `POST /token` rejection that doesn't need a valid assertion
+- the MCP half, using a token the Resource AS mints directly
+- persistence, verified by reading a write back out rather than trusting the echo
+- both write paths, and that each is attributed to the right one
+- the isolation that matters — a second subject sees different records, naming another
+  user's id returns not-found, an unauthenticated or forged-cookie write is refused, and
+  a `userId` in a request body cannot redirect where a write lands
+
+It deliberately skips the ID-JAG exchange. The point is to prove everything downstream
+works before you go near PingFederate, so anything that fails during the live flow can
+only be in the PF leg.
+
+### When step 2 fails
+
+```bash
+npx tsx scripts/probe-jwks.ts "<the assertion>"
+```
+
+Fetches the JWKS and tries the assertion against **every** key it publishes, one at a
+time, printing which ones were tried and whether any verified. It also reports the
+segment sizes, since a truncated paste looks identical to a bad signature.
+
+The answer it gives you is which of two problems you have: the signing key is published
+and something else is wrong, or the key simply isn't at that endpoint. In PingFederate
+the key that signs an issued token is chosen by the token generator handling the
+exchange, and that isn't necessarily the OIDC provider key served at `/pf/JWKS`.
+
+If the signer turns out not to be published, `PF_SIGNING_CERTS` takes comma-separated
+paths to certificates trusted out of band, tried in addition to the JWKS. It unblocks a
+demo, and out-of-band certificate distribution is a legitimate pattern — but JWKS is the
+better story and survives rotation, so prefer fixing the PingFederate side.
+
+To test one exported certificate instead of a whole JWKS:
+
+```bash
+npx tsx scripts/probe-jwks.ts "<the assertion>" --cert ./oauth-cert.pem
+```
+
+That settles the question the PingFederate console raises but can't answer — whether the
+certificate a connection is configured with is the one that actually signed the token.
+
+## The todos application
+
+The MCP server isn't the application — it's one door into it. Behind both doors is a
+SQLite database (`data/todos.db`, created on first run) with real users and real records:
+titles, notes, priority, due dates, status, and who created each row.
+
+Open **http://localhost:8082/app** to use it. Pick a person, sign in, and you can add and
+complete items yourself. It updates live over SSE — so during a walkthrough you can call
+`create_todo` from Postman and have it appear on screen mid-sentence.
+
+**Every row records which door it came through**, and the UI badges them: `in app` for a
+human writing over a session, `via agent` for a write that arrived through MCP carrying an
+access token the Resource AS minted from an ID-JAG. Same person, same list, two paths —
+which is the entire argument, visible in one screen.
+
+Reads are open; **writes require a session**. There's no unauthenticated write endpoint
+sitting next to the one the whole demo secures. Ownership comes from the session cookie,
+never from the request body — the same rule the MCP tools follow with the token's subject.
+
+The sign-in itself is a picker, not a credential check, and the UI says so. The real
+version is an OIDC authorization-code flow against the same PingFederate that issues the
+ID-JAGs; at that point the demo lands completely, because the human signs in once and the
+agent never signs in at all.
+
+Users arrive by just-in-time provisioning: a `sub` the app has never seen becomes a real
+row at step 7, with a starting backlog so the first `list_todos` returns something
+readable. `npm run db:reset` clears everything.
+
+Ownership is enforced in the SQL, not in the tool handlers — no tool takes a user
+parameter, and naming another person's todo id returns not-found rather than their data.
+
+## Layout
+
+```
+src/
+  config.ts              env loading, validated at boot
+  trace.ts               the narration bus — stdout and SSE
+  keys.ts                RS256 key pair for our access tokens
+  resource-as/           the authorization server — the ten checks
+  mcp/                   the resource server — bearer auth and the tools
+  todos/                 the application — schema, store, session, its own UI
+  web/                   the live console
+postman/                 collection + environment
+scripts/
+  check.ts               offline verification
+  probe-jwks.ts          which key signed this assertion, if any
+data/                    the todos database (gitignored, created on first run)
+keys/                    our signing key pair (gitignored, created on first run)
+```
+
+## Out of scope
+
+No chatbot client, no AgentCore wiring, no refresh tokens, no DPoP.
+
+The app's sign-in is a picker rather than a credential check — enough to give the UI a
+real session boundary, not enough to call it authentication. Replacing it with an OIDC
+authorization-code flow against the same PingFederate is the obvious next step, and the
+one that would complete the argument: the human signs in once, and the agent never signs
+in at all.
+
+The RFC 9728 metadata is the seam a chatbot client attaches to later.

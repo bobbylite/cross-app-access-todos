@@ -1,0 +1,36 @@
+node_modules/
+
+# Real configuration. .env.example is the one that gets committed.
+.env
+.env.local
+.env.*.local
+
+# Generated on first run. Regenerating them is fine; committing a signing key is not.
+keys/
+
+# The todos application's database, plus SQLite's WAL sidecars.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Exported IdP certificates, if PF_SIGNING_CERTS points somewhere inside the repo.
+certs/
+*.pem
+*.crt
+*.der
+*.p12
+*.pfx
+
+# Build output, should anyone add a compile step.
+dist/
+build/
+*.tsbuildinfo
+
+*.log
+npm-debug.log*
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

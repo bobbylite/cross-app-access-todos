@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cross App Access — live validation console</title>
+    <link rel="stylesheet" href="/console/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title">
+        <h1>Cross App Access — validation console</h1>
+        <p id="subtitle">Every check the Resource AS runs on an ID-JAG, as it runs.</p>
+      </div>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="status-text">connecting…</span>
+        <button id="clear" type="button">Clear</button>
+      </div>
+    </header>
+
+    <section id="config" class="config" aria-label="Configuration"></section>
+
+    <main>
+      <section class="pane" aria-label="Validation steps">
+        <h2>Pipeline</h2>
+        <div id="runs" class="runs">
+          <p class="empty">
+            Waiting for a request. Redeem an ID-JAG at
+            <code>POST /token</code> to start.
+          </p>
+        </div>
+      </section>
+
+      <section class="pane" aria-label="Decoded tokens">
+        <h2>Tokens</h2>
+        <div id="tokens" class="tokens">
+          <p class="empty">
+            The ID-JAG and the access token issued in exchange for it will appear
+            here side by side.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/console/app.js"></script>
+  </body>
+</html>

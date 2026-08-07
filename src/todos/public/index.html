@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Todos</title>
+    <link rel="stylesheet" href="/app/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Todos</h1>
+        <p class="sub">
+          The application's own records. Every row remembers how it was written —
+          by a person in this UI, or by an agent through MCP.
+        </p>
+      </div>
+      <div class="head-right">
+        <div class="live"><span id="dot" class="dot"></span><span id="live">connecting…</span></div>
+        <div id="session" class="session"></div>
+      </div>
+    </header>
+
+    <nav id="people" class="people" aria-label="People"></nav>
+
+    <main>
+      <form id="compose" class="compose" hidden>
+        <input id="title" name="title" type="text" required
+               placeholder="Add something to your list…" autocomplete="off" />
+        <select id="priority" name="priority" aria-label="Priority">
+          <option value="normal">normal</option>
+          <option value="high">high</option>
+          <option value="low">low</option>
+        </select>
+        <input id="due" name="due_date" type="date" aria-label="Due date" />
+        <button type="submit">Add</button>
+      </form>
+      <p id="compose-hint" class="hint"></p>
+
+      <section id="board" class="board" aria-live="polite">
+        <p class="empty">Loading…</p>
+      </section>
+    </main>
+
+    <footer id="footer"></footer>
+
+    <script type="module" src="/app/app.js"></script>
+  </body>
+</html>

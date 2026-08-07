@@ -1,0 +1,763 @@
+{
+  "info": {
+    "name": "Cross App Access — ID-JAG → Resource AS → MCP",
+    "description": "Drives the full Cross App Access chain against live PingFederate and the local Resource AS.\n\nRun the folders in order. Each request captures what the next one needs, so `1. PingFederate` → `2. Redeem` → `3. MCP` works top to bottom in one click.\n\n**One thing that surprises people:** RFC 8693 returns the ID-JAG in the `access_token` field of the token-exchange response, not in a field called `id_jag`. Check `issued_token_type` to confirm it is really an ID-JAG.\n\n**Before you start:** the `audience` sent in the token exchange must match `RESOURCE_AS_ISSUER` on the Resource AS as an exact string. A trailing slash or an http/https difference fails at step 4 of the validation pipeline and the error will look like a signature problem. Watch the console at {{resource_as}}/console.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. PingFederate",
+      "description": "Establish the user's identity, then exchange it for an ID-JAG addressed to the Resource AS.",
+      "item": [
+        {
+          "name": "1a. Get an ID token (authorization code + PKCE)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman's OAuth 2.0 helper (Authorization tab) does the interactive part.",
+                  "// It stores the ID token for you; this request just confirms it is usable and",
+                  "// copies it into the environment for the exchange below.",
+                  "const idToken = pm.environment.get('id_token');",
+                  "",
+                  "pm.test('An ID token is present', function () {",
+                  "    pm.expect(idToken, 'Set id_token in the environment, or run the OAuth 2.0 helper and paste the id_token in').to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "if (idToken && idToken.split('.').length === 3) {",
+                  "    const claims = JSON.parse(atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "    console.log('ID token subject:', claims.sub, '| issuer:', claims.iss);",
+                  "    pm.test('ID token has not expired', function () {",
+                  "        pm.expect(claims.exp * 1000).to.be.greaterThan(Date.now());",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pf_issuer}}/.well-known/openid-configuration",
+              "host": ["{{pf_issuer}}"],
+              "path": [".well-known", "openid-configuration"]
+            },
+            "description": "Fetches PingFederate's discovery document, and asserts that an `id_token` is available in the environment.\n\nGet the ID token whichever way suits your PF setup:\n\n- **Authorization code + PKCE** — configure Postman's OAuth 2.0 helper on this request's Authorization tab with scope `openid profile email`, click *Get New Access Token*, then copy the `id_token` from the token details into the `id_token` environment variable.\n- **An ID token you already have** — paste it straight into `id_token`.\n\nThe rest of the collection only needs `id_token` to be set."
+          }
+        },
+        {
+          "name": "1b. Token exchange → ID-JAG",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Exchange succeeded', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "// RFC 8693 returns the issued token in `access_token` whatever its type.",
+                  "// `issued_token_type` is what tells you it is actually an ID-JAG.",
+                  "pm.test('PingFederate issued an ID-JAG', function () {",
+                  "    pm.expect(body.issued_token_type).to.eql('urn:ietf:params:oauth:token-type:id-jag');",
+                  "});",
+                  "",
+                  "pm.environment.set('id_jag', body.access_token);",
+                  "",
+                  "const parts = String(body.access_token || '').split('.');",
+                  "if (parts.length === 3) {",
+                  "    const decode = (s) => JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/')));",
+                  "    const header = decode(parts[0]);",
+                  "    const claims = decode(parts[1]);",
+                  "",
+                  "    pm.test(\"typ header is 'oauth-id-jag+jwt'\", function () {",
+                  "        pm.expect(header.typ).to.eql('oauth-id-jag+jwt');",
+                  "    });",
+                  "",
+                  "    // The check that catches the most common misconfiguration, before the",
+                  "    // Resource AS gets a chance to reject it more cryptically.",
+                  "    pm.test('aud matches the Resource AS exactly', function () {",
+                  "        const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];",
+                  "        pm.expect(aud, 'PingFederate\\u0027s registered audience must equal RESOURCE_AS_ISSUER, character for character').to.include(pm.environment.get('resource_as'));",
+                  "    });",
+                  "",
+                  "    pm.test('client_id claim matches the redeeming client', function () {",
+                  "        pm.expect(claims.client_id).to.eql(pm.environment.get('client_id'));",
+                  "    });",
+                  "",
+                  "    console.log('ID-JAG claims:', JSON.stringify(claims, null, 2));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{client_id}}", "type": "string" },
+                { "key": "password", "value": "{{client_secret}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:token-exchange",
+                  "type": "text"
+                },
+                {
+                  "key": "requested_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:id-jag",
+                  "type": "text"
+                },
+                { "key": "subject_token", "value": "{{id_token}}", "type": "text" },
+                {
+                  "key": "subject_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:id_token",
+                  "type": "text"
+                },
+                {
+                  "key": "audience",
+                  "value": "{{resource_as}}",
+                  "type": "text",
+                  "description": "Becomes the `aud` of the ID-JAG. Must equal RESOURCE_AS_ISSUER exactly."
+                },
+                {
+                  "key": "resource",
+                  "value": "{{mcp_url}}",
+                  "type": "text",
+                  "description": "RFC 8707 — which resource server the eventual token is for."
+                },
+                { "key": "scope", "value": "todos.read todos.write", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{pf_token_endpoint}}",
+              "host": ["{{pf_token_endpoint}}"]
+            },
+            "description": "Exchanges the ID token for an Identity Assertion JWT Authorization Grant addressed to the Resource AS.\n\nThe assertion comes back in `access_token`; `issued_token_type` identifies it as an ID-JAG."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Redeem at the Resource AS",
+      "item": [
+        {
+          "name": "2a. ID-JAG → access token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redemption succeeded', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('access_token', body.access_token);",
+                  "",
+                  "pm.test('Response is shaped per section 4.4.2', function () {",
+                  "    pm.expect(body.token_type).to.eql('Bearer');",
+                  "    pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.expires_in).to.be.a('number');",
+                  "    pm.expect(body.scope).to.be.a('string');",
+                  "});",
+                  "",
+                  "const parts = String(body.access_token || '').split('.');",
+                  "if (parts.length === 3) {",
+                  "    const claims = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "",
+                  "    // The audience moved. The ID-JAG was addressed to the authorization",
+                  "    // server; this token is addressed to the MCP server, and is useless",
+                  "    // at any other resource.",
+                  "    pm.test('The new token is addressed to the MCP server, not to the AS', function () {",
+                  "        pm.expect(claims.aud).to.eql(pm.environment.get('mcp_url'));",
+                  "        pm.expect(claims.aud).to.not.eql(pm.environment.get('resource_as'));",
+                  "    });",
+                  "",
+                  "    pm.test('Issued by the Resource AS', function () {",
+                  "        pm.expect(claims.iss).to.eql(pm.environment.get('resource_as'));",
+                  "    });",
+                  "",
+                  "    console.log('Access token claims:', JSON.stringify(claims, null, 2));",
+                  "    console.log('Granted scope:', body.scope);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{client_id}}", "type": "string" },
+                { "key": "password", "value": "{{client_secret}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "type": "text"
+                },
+                { "key": "assertion", "value": "{{id_jag}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{resource_as}}/token",
+              "host": ["{{resource_as}}"],
+              "path": ["token"]
+            },
+            "description": "The RFC 7523 JWT bearer grant. This is the request that runs the ten-step validation pipeline — watch it land, step by step, at {{resource_as}}/console.\n\nIf the ID-JAG asked for a scope local policy will not grant, the `scope` in this response is smaller than the `scope` in the assertion. That narrowing is the Resource AS making its own decision rather than deferring to PingFederate."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Call the MCP server",
+      "description": "The server runs stateless: no `initialize` handshake, no `Mcp-Session-Id`. Every call is one self-contained POST with a bearer token.",
+      "item": [
+        {
+          "name": "3a. tools/list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Authorized', function () { pm.response.to.have.status(200); });",
+                  "const result = pm.response.json().result || {};",
+                  "pm.test('Three todo tools are advertised', function () {",
+                  "    pm.expect((result.tools || []).map(function (t) { return t.name; })).to.have.members(['list_todos', 'create_todo', 'complete_todo']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "description": "The streamable HTTP transport requires both media types."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/list\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{mcp_url}}", "host": ["{{mcp_url}}"] }
+          }
+        },
+        {
+          "name": "3b. tools/call — list_todos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Authorized', function () { pm.response.to.have.status(200); });",
+                  "const result = pm.response.json().result || {};",
+                  "pm.test('Returned todo content', function () {",
+                  "    pm.expect(result.content).to.be.an('array').that.is.not.empty;",
+                  "});",
+                  "console.log(result.content && result.content[0] && result.content[0].text);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json, text/event-stream" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_todos\",\n    \"arguments\": {}\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{mcp_url}}", "host": ["{{mcp_url}}"] },
+            "description": "Note that the user is not a parameter. The subject comes from the verified access token, so a caller cannot ask for someone else's todos."
+          }
+        },
+        {
+          "name": "3c. tools/call — create_todo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Authorized', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Created a todo', function () {",
+                  "    const result = pm.response.json().result || {};",
+                  "    pm.expect(result.content[0].text).to.include('\"id\"');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json, text/event-stream" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"create_todo\",\n    \"arguments\": {\n      \"title\": \"Approve the vendor access review\"\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{mcp_url}}", "host": ["{{mcp_url}}"] }
+          }
+        },
+        {
+          "name": "3d. Discovery — protected resource metadata",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('RFC 9728 metadata is served without a token', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('It points at this Resource AS', function () {",
+                  "    pm.expect(pm.response.json().authorization_servers).to.include(pm.environment.get('resource_as'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mcp_origin}}/.well-known/oauth-protected-resource/mcp",
+              "host": ["{{mcp_origin}}"],
+              "path": [".well-known", "oauth-protected-resource", "mcp"]
+            },
+            "description": "How a client that has never seen this server finds its authorization server: make an unauthenticated call, read `resource_metadata` out of the `WWW-Authenticate` header on the 401, fetch this document. It is the seam a chatbot client attaches to.\n\nNote the URL shape — RFC 9728 puts the well-known segment between the host and the resource's path, so a resource at `/mcp` advertises `/.well-known/oauth-protected-resource/mcp`. Appending the well-known path to the resource URL instead is a common mistake that leaves conformant clients fetching a 404."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Rejections",
+      "description": "Each of these stops the pipeline at a different step. Run them with {{resource_as}}/console open — the failing step is the one in red.\n\nRun folder 1 and 2 first so there is a valid ID-JAG to corrupt.",
+      "item": [
+        {
+          "name": "4a. Tampered payload → fails at step 2 (signature)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-encode the payload with an edited claim while keeping the original",
+                  "// signature — exactly what a holder of a bearer token can do, and exactly",
+                  "// what a signature is there to catch.",
+                  "const parts = String(pm.environment.get('id_jag') || '').split('.');",
+                  "if (parts.length !== 3) { throw new Error('Run folder 1 first to get an id_jag'); }",
+                  "",
+                  "const fromB64Url = (s) => atob(s.replace(/-/g, '+').replace(/_/g, '/'));",
+                  "const toB64Url = (s) => btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+                  "",
+                  "let tampered;",
+                  "try {",
+                  "    const claims = JSON.parse(fromB64Url(parts[1]));",
+                  "    claims.scope = 'todos.read todos.write todos.admin';",
+                  "    tampered = parts[0] + '.' + toB64Url(JSON.stringify(claims)) + '.' + parts[2];",
+                  "} catch (e) {",
+                  "    // Fall back to a byte-level edit if this Postman build lacks atob/btoa.",
+                  "    const p = parts[1];",
+                  "    tampered = parts[0] + '.' + p.slice(0, -2) + (p.slice(-2, -1) === 'A' ? 'B' : 'A') + p.slice(-1) + '.' + parts[2];",
+                  "}",
+                  "pm.environment.set('id_jag_tampered', tampered);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Rejected with 400 invalid_grant', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql('invalid_grant');",
+                  "});",
+                  "console.log('Console shows: step 2 FAIL — signature did not verify');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{client_id}}", "type": "string" },
+                { "key": "password", "value": "{{client_secret}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "type": "text"
+                },
+                { "key": "assertion", "value": "{{id_jag_tampered}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{resource_as}}/token",
+              "host": ["{{resource_as}}"],
+              "path": ["token"]
+            }
+          }
+        },
+        {
+          "name": "4b. Wrong client redeems it → fails at step 5 (client binding)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The unregistered client never gets as far as the assertion: it fails",
+                  "// client authentication at step 1. That is the correct order — an",
+                  "// unknown caller should not learn anything about the assertion.",
+                  "pm.test('Rejected before the assertion is even examined', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().error).to.eql('invalid_client');",
+                  "});",
+                  "console.log('Console shows: step 1 FAIL — client authentication');",
+                  "console.log('To see step 5 fail instead, register a second client in .env and redeem this ID-JAG as that client.');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "some-other-client", "type": "string" },
+                { "key": "password", "value": "some-other-secret", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "type": "text"
+                },
+                { "key": "assertion", "value": "{{id_jag}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{resource_as}}/token",
+              "host": ["{{resource_as}}"],
+              "path": ["token"]
+            },
+            "description": "A different client presenting someone else's ID-JAG. It is refused at step 1 because the client is not registered here at all.\n\nRegister a second client to see step 5 — the `client_id` claim not matching the authenticated client — reject it instead."
+          }
+        },
+        {
+          "name": "4c. Replay the same ID-JAG → fails at step 6b (jti)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('The second redemption is refused', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql('invalid_grant');",
+                  "});",
+                  "console.log('Console shows: step 6b FAIL — jti already redeemed');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{client_id}}", "type": "string" },
+                { "key": "password", "value": "{{client_secret}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "type": "text"
+                },
+                { "key": "assertion", "value": "{{id_jag}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{resource_as}}/token",
+              "host": ["{{resource_as}}"],
+              "path": ["token"]
+            },
+            "description": "Run this immediately after `2a`. The assertion is still perfectly valid — correct signature, correct audience, unexpired — and it is still refused, because its `jti` has already been spent.\n\nRedemption is single use. Capturing an ID-JAG in flight buys an attacker nothing once the legitimate client has redeemed it."
+          }
+        },
+        {
+          "name": "4d. Wrong audience → fails at step 4 (aud)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Two outcomes are both correct, depending on your PF configuration:",
+                  "//   - PF refuses to mint an assertion for an unregistered audience (best)",
+                  "//   - PF mints it, and the Resource AS refuses it at step 4",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set('id_jag_wrong_aud', body.access_token);",
+                  "    console.log('PingFederate issued it. Now run 4e to watch step 4 reject it.');",
+                  "} else {",
+                  "    pm.test('PingFederate refused the unregistered audience', function () {",
+                  "        pm.expect(pm.response.code).to.be.oneOf([400, 401, 403]);",
+                  "    });",
+                  "    console.log('PingFederate refused up front — the IdP caught it, so the Resource AS never sees it.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{client_id}}", "type": "string" },
+                { "key": "password", "value": "{{client_secret}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:token-exchange",
+                  "type": "text"
+                },
+                {
+                  "key": "requested_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:id-jag",
+                  "type": "text"
+                },
+                { "key": "subject_token", "value": "{{id_token}}", "type": "text" },
+                {
+                  "key": "subject_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:id_token",
+                  "type": "text"
+                },
+                {
+                  "key": "audience",
+                  "value": "https://someone-elses-saas.example",
+                  "type": "text"
+                },
+                { "key": "scope", "value": "todos.read", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{pf_token_endpoint}}",
+              "host": ["{{pf_token_endpoint}}"]
+            },
+            "description": "Asks PingFederate for an assertion addressed to a different SaaS vendor.\n\nWhichever party refuses is the interesting part: a well-configured IdP refuses to mint it, and if it does mint one, the Resource AS refuses to spend it."
+          }
+        },
+        {
+          "name": "4e. Redeem the wrong-audience ID-JAG",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Rejected with 400 invalid_grant', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql('invalid_grant');",
+                  "});",
+                  "console.log('Console shows: step 4 FAIL — aud does not match this authorization server');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{client_id}}", "type": "string" },
+                { "key": "password", "value": "{{client_secret}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "type": "text"
+                },
+                {
+                  "key": "assertion",
+                  "value": "{{id_jag_wrong_aud}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{resource_as}}/token",
+              "host": ["{{resource_as}}"],
+              "path": ["token"]
+            },
+            "description": "Only runs if `4d` succeeded at PingFederate. An assertion minted for another vendor, presented here."
+          }
+        },
+        {
+          "name": "4f. Under-scoped token calls create_todo → 403 insufficient_scope",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refused for want of a scope', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "    pm.expect(pm.response.json().error).to.eql('insufficient_scope');",
+                  "});",
+                  "pm.test('The challenge names the missing scope', function () {",
+                  "    pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('scope=\"todos.write\"');",
+                  "});",
+                  "console.log('WWW-Authenticate:', pm.response.headers.get('WWW-Authenticate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token_readonly}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json, text/event-stream" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 9,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"create_todo\",\n    \"arguments\": {\n      \"title\": \"This should not be created\"\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{mcp_url}}", "host": ["{{mcp_url}}"] },
+            "description": "Needs a read-only token in `access_token_readonly`.\n\nTo get one: run `1b` with `scope=todos.read`, run `2a`, and copy the resulting `access_token` into `access_token_readonly`.\n\nThe refusal happens at the HTTP layer with a proper OAuth challenge naming the scope that is missing — not as a tool result that happens to say no."
+          }
+        },
+        {
+          "name": "4g. No token at all → 401 with discovery pointer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthenticated calls are refused', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "pm.test('The 401 tells the client where to get a token', function () {",
+                  "    pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('resource_metadata=');",
+                  "});",
+                  "console.log('WWW-Authenticate:', pm.response.headers.get('WWW-Authenticate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json, text/event-stream" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 10,\n  \"method\": \"tools/list\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{mcp_url}}", "host": ["{{mcp_url}}"] },
+            "description": "The start of the discovery bootstrap. A client with no credential learns, from the failure itself, which authorization server to go to."
+          }
+        }
+      ]
+    }
+  ]
+}

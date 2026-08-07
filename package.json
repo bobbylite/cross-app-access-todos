@@ -1,0 +1,27 @@
+{
+  "name": "agentic-cross-domain-access-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A real Resource Authorization Server and MCP server for Cross App Access (ID-JAG), against live PingFederate",
+  "scripts": {
+    "dev": "NODE_OPTIONS=\"--experimental-sqlite --disable-warning=ExperimentalWarning\" tsx watch src/index.ts",
+    "start": "NODE_OPTIONS=\"--experimental-sqlite --disable-warning=ExperimentalWarning\" tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit && NODE_OPTIONS=\"--experimental-sqlite --disable-warning=ExperimentalWarning\" tsx scripts/check.ts",
+    "db:reset": "rm -rf data && echo 'todos database removed; it rebuilds on next start'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "jose": "^6.2.8",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
