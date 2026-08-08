@@ -1,11 +1,5 @@
-import { readFile } from "node:fs/promises";
-import {
-  type CryptoKey,
-  createRemoteJWKSet,
-  importJWK,
-  importSPKI,
-  importX509,
-} from "jose";
+import { createHash } from "node:crypto";
+import { type CryptoKey, createRemoteJWKSet, importJWK } from "jose";
 import { config } from "../config.js";
 
 /**
@@ -73,8 +67,6 @@ export async function initPingFederate(): Promise<PfMetadata> {
     cooldownDuration: 30 * 1000,
   });
 
-  await loadStaticSigningCerts();
-
   return metadata;
 }
 
@@ -89,59 +81,45 @@ export function pfJwks(): ReturnType<typeof createRemoteJWKSet> {
 }
 
 /**
- * Every RS256 signing key in PingFederate's JWKS, for assertions that arrive without a
- * `kid` header.
+ * Selecting PingFederate's signing key when the assertion has no `kid`.
  *
- * PingFederate does not put a `kid` on the ID-JAGs it issues. That is permitted — `kid`
- * is a hint, not a requirement — but it means a JWKS holding more than one RS256 key is
- * ambiguous, and the usual "look the key up by kid" path has nothing to look up. The
- * remaining correct behaviour is to try each candidate and accept the assertion if any
- * one of them verifies it.
+ * PingFederate does not put a `kid` on the ID-JAGs it issues — it uses `x5t`, the SHA-1
+ * thumbprint of the signing certificate. Both are legal JOSE key hints, but only `kid` is
+ * what an ordinary JWKS lookup keys on, so the usual path has nothing to resolve.
  *
- * This is not a weakening of the check. A signature either verifies under a key
- * PingFederate publishes or it does not; trying several costs a few milliseconds of
- * local RSA work and admits nothing extra.
+ * `x5t` resolves it precisely: PingFederate publishes the same thumbprint on the JWKS
+ * entry, so the header names exactly one certificate. Matching on it is a real lookup,
+ * not a guess. Trying every published key remains as a last resort, which costs a few
+ * milliseconds of local RSA work and admits nothing extra — a signature either verifies
+ * under a key PingFederate publishes or it does not.
  */
-const CANDIDATE_TTL_MS = 10 * 60 * 1000;
-let candidates: { keys: CryptoKey[]; fetchedAt: number } | null = null;
 
-/** Certificates trusted out of band, loaded once at boot. */
-let staticKeys: { key: CryptoKey; source: string }[] = [];
+const CACHE_TTL_MS = 10 * 60 * 1000;
 
-export async function loadStaticSigningCerts(): Promise<
-  { key: CryptoKey; source: string }[]
-> {
-  staticKeys = [];
-  for (const path of config.pf.signingCertPaths) {
-    const raw = await readFile(path);
-    const asText = raw.toString("utf8");
-    // PingFederate exports PEM or DER depending on version; accept either.
-    const pem = asText.includes("-----BEGIN")
-      ? asText
-      : `-----BEGIN CERTIFICATE-----\n${raw
-          .toString("base64")
-          .replace(/(.{64})/g, "$1\n")
-          .trimEnd()}\n-----END CERTIFICATE-----\n`;
-    const key = (pem.includes("BEGIN CERTIFICATE")
-      ? await importX509(pem, "RS256")
-      : await importSPKI(pem, "RS256")) as CryptoKey;
-    staticKeys.push({ key, source: path });
-  }
-  return staticKeys;
+interface PfKey {
+  key: CryptoKey;
+  kid: string | null;
+  /** SHA-1 certificate thumbprint, as published or derived from `x5c`. */
+  x5t: string | null;
+  /** SHA-256 certificate thumbprint. */
+  x5tS256: string | null;
 }
 
-export function staticSigningKeys(): CryptoKey[] {
-  return staticKeys.map((s) => s.key);
+let cache: { keys: PfKey[]; fetchedAt: number } | null = null;
+
+/** How the key that verified an assertion was found. Reported in the trace. */
+export type KeyLookup = "kid" | "x5t" | "x5t#S256" | "exhaustive";
+
+function thumbprint(x5c: unknown, algorithm: "sha1" | "sha256"): string | null {
+  if (!Array.isArray(x5c) || typeof x5c[0] !== "string") return null;
+  return createHash(algorithm)
+    .update(Buffer.from(x5c[0], "base64"))
+    .digest("base64url");
 }
 
-export async function pfCandidateKeys(
-  forceRefresh = false,
-): Promise<CryptoKey[]> {
-  const fresh =
-    candidates && Date.now() - candidates.fetchedAt < CANDIDATE_TTL_MS;
-  if (fresh && !forceRefresh) {
-    return [...candidates!.keys, ...staticSigningKeys()];
-  }
+async function fetchKeys(forceRefresh: boolean): Promise<PfKey[]> {
+  const fresh = cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
+  if (fresh && !forceRefresh) return cache!.keys;
 
   const response = await fetch(pfMetadata().jwksUri);
   if (!response.ok) {
@@ -153,20 +131,82 @@ export async function pfCandidateKeys(
 
   // Every RSA key, deliberately unfiltered by `alg` or `use`. Those are advisory
   // metadata, and filtering on them risks discarding the one key that would actually
-  // have verified the assertion. The signature check is the real gate.
+  // have verified the assertion.
   const usable = (doc.keys ?? []).filter((k) => k.kty === "RSA");
 
-  const keys: CryptoKey[] = [];
+  const keys: PfKey[] = [];
   for (const jwk of usable) {
     try {
-      keys.push((await importJWK(jwk, "RS256")) as CryptoKey);
+      keys.push({
+        key: (await importJWK(jwk, "RS256")) as CryptoKey,
+        kid: typeof jwk.kid === "string" ? jwk.kid : null,
+        // Derived from x5c when absent, so this works against a JWKS that publishes
+        // the certificate chain but not the thumbprint.
+        x5t:
+          typeof jwk.x5t === "string" ? jwk.x5t : thumbprint(jwk.x5c, "sha1"),
+        x5tS256:
+          typeof jwk["x5t#S256"] === "string"
+            ? (jwk["x5t#S256"] as string)
+            : thumbprint(jwk.x5c, "sha256"),
+      });
     } catch {
       // A key we can't import is one we could never have verified against.
     }
   }
 
-  candidates = { keys, fetchedAt: Date.now() };
-  // Out-of-band certificates are appended, never substituted — the JWKS stays the
-  // primary source and keeps working the moment PingFederate publishes the right key.
-  return [...keys, ...staticSigningKeys()];
+  cache = { keys, fetchedAt: Date.now() };
+  return keys;
+}
+
+/**
+ * The keys worth trying for this assertion, narrowed by whatever hint its header
+ * carries. Returns how the narrowing happened so the trace can say which.
+ */
+export async function pfCandidateKeys(
+  header: { kid?: unknown; x5t?: unknown; "x5t#S256"?: unknown },
+  forceRefresh = false,
+): Promise<{ keys: CryptoKey[]; how: KeyLookup; published: number }> {
+  const published = await fetchKeys(forceRefresh);
+
+  const sha256 = header["x5t#S256"];
+  if (typeof sha256 === "string") {
+    const matched = published.filter((k) => k.x5tS256 === sha256);
+    if (matched.length > 0) {
+      return {
+        keys: matched.map((k) => k.key),
+        how: "x5t#S256",
+        published: published.length,
+      };
+    }
+  }
+
+  const sha1 = header.x5t;
+  if (typeof sha1 === "string") {
+    const matched = published.filter((k) => k.x5t === sha1);
+    if (matched.length > 0) {
+      return {
+        keys: matched.map((k) => k.key),
+        how: "x5t",
+        published: published.length,
+      };
+    }
+  }
+
+  const kid = header.kid;
+  if (typeof kid === "string") {
+    const matched = published.filter((k) => k.kid === kid);
+    if (matched.length > 0) {
+      return {
+        keys: matched.map((k) => k.key),
+        how: "kid",
+        published: published.length,
+      };
+    }
+  }
+
+  return {
+    keys: published.map((k) => k.key),
+    how: "exhaustive",
+    published: published.length,
+  };
 }

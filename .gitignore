@@ -34,3 +34,9 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# AgentCore project: local state, build output, and the generated env file.
+xaaagent/**/node_modules/
+xaaagent/agentcore/.cli/
+xaaagent/agentcore/.env.local
+xaaagent/**/dist/

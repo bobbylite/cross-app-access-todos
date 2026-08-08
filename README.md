@@ -131,12 +131,22 @@ PingFederate 13.1+ supports `requested_token_type=urn:ietf:params:oauth:token-ty
 - The same `client_id` registered here as `CLIENT_ID`, with a secret — otherwise step 5
   rejects the redemption by design.
 
-**PingFederate does not put a `kid` on the ID-JAGs it issues** — it uses `x5t`, the
-certificate thumbprint, instead. Both are legal; only `kid` is what a JWKS lookup keys on,
-so a JWKS holding several RS256 keys becomes ambiguous and the ordinary path has nothing
-to resolve. Step 2 falls back to trying every RS256 key PF publishes and accepts the
-assertion if any one verifies it. That admits nothing extra: a signature either verifies
-under a key PF advertises or it doesn't.
+**PingFederate does not put a `kid` on the ID-JAGs it issues** — it identifies the key
+with `x5t`, the SHA-1 thumbprint of the signing certificate. Both are legal JOSE key
+hints, but only `kid` is what an ordinary JWKS lookup keys on, so the usual path has
+nothing to resolve.
+
+Step 2 handles this by matching `x5t` against the thumbprint PingFederate publishes on
+each JWKS entry. That's a real lookup against published metadata, not a guess, and the
+console says which hint resolved the key. `x5t#S256` is matched the same way, and both are
+derived from `x5c` when a JWKS publishes the certificate but not the thumbprint. Only when
+a header carries no usable hint at all does it fall back to trying every published key.
+
+**Make sure the ID-JAG signing certificate is published in the JWKS.** In PingFederate the
+key that signs an issued token is chosen by the token generator handling the exchange, and
+it is not automatically the OIDC provider key at `/pf/JWKS`. If it isn't published, step 2
+cannot verify anything and no amount of configuration here will help — see
+[When step 2 fails](#when-step-2-fails).
 
 **One thing that surprises people:** RFC 8693 returns the ID-JAG in the `access_token`
 field of the token-exchange response, not in a field named after its type. Check
@@ -156,7 +166,6 @@ Everything lives in `.env`; see [.env.example](.env.example) for the annotated l
 | `MCP_RESOURCE` | Canonical URI of the MCP server, including the `/mcp` path |
 | `CLIENT_ID` / `CLIENT_SECRET` | The client allowed to redeem ID-JAGs here |
 | `ALLOWED_SCOPES` | What policy is willing to grant |
-| `PF_SIGNING_CERTS` | Optional — IdP certificates trusted out of band, when PF signs ID-JAGs with a key it doesn't publish |
 | `TODOS_DB_PATH` | Optional — defaults to `./data/todos.db`; `:memory:` for a throwaway |
 
 The RS256 key pair for our own access tokens is generated on first run into `keys/`
@@ -244,10 +253,9 @@ and something else is wrong, or the key simply isn't at that endpoint. In PingFe
 the key that signs an issued token is chosen by the token generator handling the
 exchange, and that isn't necessarily the OIDC provider key served at `/pf/JWKS`.
 
-If the signer turns out not to be published, `PF_SIGNING_CERTS` takes comma-separated
-paths to certificates trusted out of band, tried in addition to the JWKS. It unblocks a
-demo, and out-of-band certificate distribution is a legitimate pattern — but JWKS is the
-better story and survives rotation, so prefer fixing the PingFederate side.
+If the signer isn't published, that is the fix — publish it. There is deliberately no
+option here to trust a certificate out of band: it would mean the demo says "we fetch the
+IdP's keys" while quietly reading a file, and it wouldn't survive a key rotation.
 
 To test one exported certificate instead of a whole JWKS:
 
@@ -257,6 +265,83 @@ npx tsx scripts/probe-jwks.ts "<the assertion>" --cert ./oauth-cert.pem
 
 That settles the question the PingFederate console raises but can't answer — whether the
 certificate a connection is configured with is the one that actually signed the token.
+
+## The chatbot
+
+The agent lives in `xaaagent/` — a **Bedrock AgentCore** runtime, TypeScript, Claude Opus
+5 via Bedrock. It holds no credential for the todos app. On each turn it takes the
+caller's own token and runs the chain itself:
+
+```
+caller's id_token ──exchange at PingFederate──▶ ID-JAG ──redeem here──▶ access token
+                                                                            │
+                                          MCP tools, scoped to one user ────┘
+```
+
+Two processes:
+
+```bash
+npm run dev
+```
+
+```bash
+cd xaaagent && /opt/homebrew/bin/agentcore dev --skip-deploy --logs
+```
+
+Then open **http://localhost:8083** and just start talking — there is no sign-in screen.
+
+**Authorization arrives when it's needed, not before.** Ask *"how does access work?"* and
+it answers, unauthenticated, with no tools. Ask *"what's on my list?"* and the agent calls
+its one anonymous tool, `request_sign_in`, which raises a sign-in card naming what it
+needs access **for**. You sign in to PingFederate once, in a popup, and the turn that
+triggered it replays automatically — you never retype it, and you are never asked to log
+in to the todos app at all.
+
+After that the chain is drawn in the transcript as it happens, and each tool call appears
+as its own line, so *"what's on my list?"* shows the exchange, the redemption, and
+`list_todos` before the answer arrives.
+
+### Configuring sign-in
+
+The chat client needs **its own** PingFederate OAuth client — separate from the one that
+redeems ID-JAGs. That one acts on the user's behalf; this one signs the human in, and
+keeping them apart is exactly the point being made.
+
+In PingFederate, create an OAuth client with:
+
+| | |
+| --- | --- |
+| Grant type | Authorization Code |
+| Redirect URI | `http://localhost:8083/auth/callback` — must match exactly |
+| PKCE | required, `S256` |
+| Scopes | `openid`, `profile` |
+| OIDC policy | attached, or no `id_token` is issued |
+
+Then fill in `OIDC_CLIENT_ID` in `.env`. Leave `OIDC_CLIENT_SECRET` empty for a public
+client — PKCE alone is enough, and PingFederate advertises `none` as a token endpoint auth
+method. Until it's set, the chat still runs and the agent still asks; the sign-in button
+just says so and tells you which variable is missing.
+
+The `id_token` lives in a server-side session keyed by an `HttpOnly` cookie. The browser
+never holds it — it knows only that it is signed in and as whom.
+
+**Four things that bite:**
+
+- **`--skip-deploy` is not optional.** Without it, `agentcore dev` provisions AWS
+  resources before starting.
+- **Use the full path to `agentcore`** if the deprecated starter toolkit is still
+  installed — a bare `agentcore` resolves to it and won't understand the project.
+  `pip uninstall bedrock-agentcore-starter-toolkit` fixes it permanently.
+- **The agent picks a free port.** It wants 8080; if something already holds it, it
+  quietly takes 8084 and the chat client — pointed at `AGENT_URL`, default 8080 — talks
+  to the wrong thing. Check the `Server:` line it prints.
+- **The token must be fresh.** PingFederate ID tokens expire in minutes; the chat client
+  checks `exp` before it lets you start and tells you to re-run `1a`.
+
+The agent reads the caller's token from `context.headers` — the runtime filters incoming
+headers down to `Authorization` and `Custom-*`. Locally the chat client's proxy sets that
+header; deployed, the runtime's request-header allowlist does. The agent code cannot tell
+the two apart, which is what makes local iteration worth anything.
 
 ## The todos application
 

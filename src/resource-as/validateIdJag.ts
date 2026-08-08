@@ -2,7 +2,7 @@ import { compactVerify, decodeJwt, decodeProtectedHeader, errors } from "jose";
 import { config } from "../config.js";
 import type { Trace } from "../trace.js";
 import { OAuthError } from "./errors.js";
-import { pfCandidateKeys, pfJwks, pfMetadata } from "./pf.js";
+import { type KeyLookup, pfCandidateKeys, pfJwks, pfMetadata } from "./pf.js";
 import { claimJti } from "./replay.js";
 
 /**
@@ -98,8 +98,17 @@ function describePresented(assertion: string, trace: Trace): void {
   }
 
   const typ = typeof header.typ === "string" ? header.typ : "(absent)";
-  const kid = typeof header.kid === "string" ? header.kid : "(absent)";
   const alg = typeof header.alg === "string" ? header.alg : "(absent)";
+  // PingFederate identifies the key by certificate thumbprint rather than `kid`, so
+  // report whichever hint is actually present.
+  const hint =
+    typeof header.kid === "string"
+      ? `kid=${header.kid}`
+      : typeof header["x5t#S256"] === "string"
+        ? `x5t#S256=${String(header["x5t#S256"])}`
+        : typeof header.x5t === "string"
+          ? `x5t=${header.x5t}`
+          : "no key hint";
 
   let shape = "";
   try {
@@ -124,43 +133,54 @@ function describePresented(assertion: string, trace: Trace): void {
     shape = ", payload not decodable";
   }
 
-  trace.info(
-    "1c. presented token",
-    `typ=${typ}, alg=${alg}, kid=${kid}${shape}`,
-  );
+  trace.info("1c. presented token", `typ=${typ}, alg=${alg}, ${hint}${shape}`);
 }
 
 /**
- * Verifies the assertion's signature against PingFederate's keys.
+ * Verifies the assertion's signature against a key PingFederate publishes.
  *
- * When the assertion carries a `kid` this is a direct lookup. PingFederate does not put
- * a `kid` on ID-JAGs, so the fallback tries every RS256 key it publishes. Either way the
- * assertion has to verify under a key PingFederate actually advertises.
+ * A `kid` is the ordinary path and jose resolves it directly, re-fetching the JWKS by
+ * itself when the key is unknown. PingFederate's ID-JAGs carry `x5t` instead, so the
+ * fallback matches on the certificate thumbprint the JWKS publishes alongside each key —
+ * still a lookup, not a guess. Only when the header carries no usable hint at all does
+ * this try every published key in turn.
+ *
+ * Every path ends in the same place: the assertion must verify under a key that
+ * PingFederate's JWKS actually advertises.
  */
-async function verifySignature(assertion: string) {
-  const kid = decodeProtectedHeader(assertion).kid;
+async function verifySignature(
+  assertion: string,
+): Promise<{ verified: Awaited<ReturnType<typeof compactVerify>>; how: KeyLookup }> {
+  const header = decodeProtectedHeader(assertion) as Record<string, unknown>;
 
-  if (kid) {
+  if (typeof header.kid === "string") {
     try {
-      return await compactVerify(assertion, pfJwks(), {
-        algorithms: ["RS256"],
-      });
+      return {
+        verified: await compactVerify(assertion, pfJwks(), {
+          algorithms: ["RS256"],
+        }),
+        how: "kid",
+      };
     } catch {
-      // A `kid` that the JWKS can't resolve still deserves the exhaustive pass — the
-      // key may be one trusted out of band rather than published.
+      // A `kid` the remote set can't resolve still deserves the thumbprint path below.
     }
   }
 
   const attempt = async (refresh: boolean) => {
-    const keys = await pfCandidateKeys(refresh);
-    if (keys.length === 0) {
+    const { keys, how, published } = await pfCandidateKeys(header, refresh);
+    if (published === 0) {
       throw new Error(
         `no usable RS256 keys published at ${pfMetadata().jwksUri}`,
       );
     }
     for (const key of keys) {
       try {
-        return await compactVerify(assertion, key, { algorithms: ["RS256"] });
+        return {
+          verified: await compactVerify(assertion, key, {
+            algorithms: ["RS256"],
+          }),
+          how,
+        };
       } catch {
         // Wrong key of several — keep going.
       }
@@ -168,17 +188,17 @@ async function verifySignature(assertion: string) {
     return null;
   };
 
-  const verified = await attempt(false);
-  if (verified) return verified;
+  const found = await attempt(false);
+  if (found) return found;
 
   // Nothing matched. Re-fetch once in case PingFederate rotated since we last looked,
   // then give up.
   const afterRefresh = await attempt(true);
   if (afterRefresh) return afterRefresh;
 
-  const keys = await pfCandidateKeys();
+  const { published } = await pfCandidateKeys(header);
   throw new Error(
-    `no key among the ${keys.length} RS256 key(s) published at ${pfMetadata().jwksUri} verifies this assertion`,
+    `no key among the ${published} RSA key(s) published at ${pfMetadata().jwksUri} verifies this assertion`,
   );
 }
 
@@ -195,33 +215,42 @@ export async function validateIdJag(
   // none` or a symmetric algorithm is a well-known way to get a forged token accepted.
   let payloadBytes: Uint8Array;
   let header: Record<string, unknown>;
+  let lookup: KeyLookup;
   try {
-    const verified = await verifySignature(assertion);
+    const { verified, how } = await verifySignature(assertion);
     payloadBytes = verified.payload;
     header = verified.protectedHeader as Record<string, unknown>;
+    lookup = how;
   } catch (cause) {
-    // Recover the header for the log even though the signature didn't hold — knowing
-    // the `kid` is what makes a rotation problem diagnosable.
-    let kid = "unknown";
+    // Recover whichever key hint the header carries, even though the signature didn't
+    // hold — it is what makes a rotation or publishing problem diagnosable.
+    let presentedHint = "unknown";
     try {
-      kid = String(decodeProtectedHeader(assertion).kid ?? "none");
+      const failed = decodeProtectedHeader(assertion) as Record<string, unknown>;
+      presentedHint =
+        typeof failed.kid === "string"
+          ? `kid=${failed.kid}`
+          : typeof failed["x5t#S256"] === "string"
+            ? `x5t#S256=${String(failed["x5t#S256"])}`
+            : typeof failed.x5t === "string"
+              ? `x5t=${failed.x5t}`
+              : "no key hint";
     } catch {
       /* not even a well-formed JWT */
     }
     let reason = cause instanceof Error ? cause.message : String(cause);
 
-    // Reaching here without a `kid` means every published RS256 key was tried and none
-    // verified — so this is a genuine signature failure, not the ambiguity that
-    // `JWKSMultipleMatchingKeys` would otherwise report.
+    // Reaching here means the thumbprint path found nothing and every published key was
+    // tried — a genuine signature failure, not the ambiguity jose would otherwise report.
     if (cause instanceof errors.JWKSMultipleMatchingKeys) {
       reason =
-        `${pfMetadata().jwksUri} holds several candidate keys and the assertion has no ` +
-        `'kid' to choose between them`;
+        `${pfMetadata().jwksUri} holds several candidate keys and the assertion carries ` +
+        `no 'kid' or 'x5t' that matches any of them`;
     }
 
     trace.fail(
       "2. signature (PF JWKS)",
-      `Signature did not verify against ${pfMetadata().jwksUri} (kid=${kid}): ${reason}`,
+      `Signature did not verify against ${pfMetadata().jwksUri} (${presentedHint}): ${reason}`,
       "invalid_grant",
     );
     throw OAuthError.invalidGrant("ID-JAG signature verification failed");
@@ -238,9 +267,18 @@ export async function validateIdJag(
     throw OAuthError.invalidGrant("ID-JAG payload is not valid JSON");
   }
 
+  // Naming how the key was located matters on stage: "matched on x5t" is a lookup
+  // against published metadata, where "tried every key" is a brute-force fallback.
+  const foundBy =
+    lookup === "exhaustive"
+      ? "no usable key hint — tried every published key"
+      : `key found by ${lookup}=${String(
+          header[lookup === "kid" ? "kid" : lookup] ?? "?",
+        )}`;
+
   trace.pass(
     "2. signature (PF JWKS)",
-    `RS256 verified against ${pfMetadata().jwksUri} (kid=${String(header.kid ?? "none")})`,
+    `RS256 verified against ${pfMetadata().jwksUri} — ${foundBy}`,
   );
 
   const iss = requireString(rawClaims, "iss", trace);

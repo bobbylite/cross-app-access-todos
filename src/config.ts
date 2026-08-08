@@ -82,20 +82,6 @@ export const config = {
     /** Skips discovery when set. Otherwise read from the discovery document at boot. */
     jwksUri: process.env.PF_JWKS_URI?.trim() || null,
 
-    /**
-     * Comma-separated paths to IdP signing certificates trusted out of band, tried in
-     * addition to whatever the JWKS publishes.
-     *
-     * This exists because PingFederate can sign an ID-JAG with a certificate it does
-     * not publish at /pf/JWKS — the token generator picks its own key. Distributing a
-     * signing certificate out of band is a long-standing, legitimate pattern (it is how
-     * SAML federations have always worked), but JWKS is better: it survives key
-     * rotation without anyone copying a file. Prefer fixing the PingFederate side.
-     */
-    signingCertPaths: (process.env.PF_SIGNING_CERTS?.trim() || "")
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean),
   },
 
   resourceAs: {
@@ -108,6 +94,40 @@ export const config = {
   mcp: {
     resource: mcpResource,
     port: optionalNumber("MCP_PORT", 8082),
+  },
+
+  /**
+   * The chat client, and where it forwards to.
+   *
+   * `agentUrl` points at the AgentCore runtime — `agentcore dev` locally, or the
+   * deployed `/invocations` endpoint later. Only this value changes between the two.
+   */
+  chat: {
+    port: optionalNumber("CHAT_PORT", 8083),
+    agentUrl: optional("AGENT_URL", "http://localhost:8080/invocations"),
+  },
+
+  /**
+   * The chat client's own OIDC registration at PingFederate.
+   *
+   * This is a *separate* client from the one that redeems ID-JAGs. This one signs a
+   * human in; that one acts on their behalf afterwards. Keeping them apart is the point
+   * — the agent is a different party from the app the user logged into.
+   *
+   * PKCE is always used. A `clientSecret` is optional: set it for a confidential
+   * client, leave it empty for a public client (PingFederate advertises `none` as a
+   * token endpoint auth method, so both work).
+   */
+  oidc: {
+    clientId: optional("OIDC_CLIENT_ID", ""),
+    clientSecret: optional("OIDC_CLIENT_SECRET", ""),
+    redirectUri: optional(
+      "OIDC_REDIRECT_URI",
+      `http://localhost:${optionalNumber("CHAT_PORT", 8083)}/auth/callback`,
+    ),
+    // PingFederate's discovery document advertises only `openid` and `profile`;
+    // asking for `email` on top of those is rejected as an unknown scope.
+    scopes: optional("OIDC_SCOPES", "openid profile"),
   },
 
   clients: [{ clientId, clientSecret }],

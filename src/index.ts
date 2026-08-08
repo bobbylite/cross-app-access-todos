@@ -1,4 +1,5 @@
 import type express from "express";
+import { createChatApp } from "./chat/server.js";
 import { assertConfigValid, config } from "./config.js";
 import { loadSigningKeys } from "./keys.js";
 import { createMcpApp } from "./mcp/server.js";
@@ -39,6 +40,11 @@ async function main(): Promise<void> {
   await listen(resourceAs, config.resourceAs.port, "Resource AS");
   await listen(mcp, config.mcp.port, "MCP server");
 
+  // The chat client. Served here rather than from the agent, because an AgentCore
+  // runtime's contract is one /invocations endpoint, not a website.
+  const chat = createChatApp(config.chat.agentUrl);
+  await listen(chat, config.chat.port, "Chat client");
+
   const lines = [
     "",
     "  Cross App Access demo — Resource AS + todos MCP server",
@@ -53,16 +59,12 @@ async function main(): Promise<void> {
     `    metadata           ${config.mcp.resource.replace(/\/mcp$/, "")}/.well-known/oauth-protected-resource/mcp`,
     `    todos app           ${config.mcp.resource.replace(/\/mcp$/, "")}/app`,
     `    database           ${databasePath()}`,
+    `  Chat client          http://localhost:${config.chat.port}`,
+    `    forwards to        ${config.chat.agentUrl}`,
     "",
     `  PingFederate         ${pf.issuer}`,
     `    JWKS               ${pf.jwksUri}`,
     pf.tokenEndpoint ? `    token endpoint     ${pf.tokenEndpoint}` : "",
-    ...(config.pf.signingCertPaths.length > 0
-      ? [
-          `    trusted certs      ${config.pf.signingCertPaths.join(", ")}`,
-          `                       (out of band — prefer publishing these in the JWKS)`,
-        ]
-      : []),
     "",
     `  Registered clients   ${config.clients.map((c) => c.clientId).join(", ")}`,
     `  Grantable scopes     ${config.allowedScopes.join(" ")}`,

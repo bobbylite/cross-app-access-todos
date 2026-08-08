@@ -1,0 +1,346 @@
+/* The chat client. Shares the visual language of the todos app and the console so all
+   three can sit on one screen without looking like three different products. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --line: #e3e6ea;
+  --text: #16191d;
+  --muted: #6b7480;
+  --accent: #3b5bdb;
+  --agent: #7048e8;
+  --ok: #2f9e44;
+  --bad: #e03131;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --card: #1c2027;
+    --line: #2b313a;
+    --text: #e8ecf1;
+    --muted: #949eab;
+    --accent: #748ffc;
+    --agent: #b197fc;
+    --ok: #69db7c;
+    --bad: #ff8787;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.55 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.4rem 1.75rem 1rem;
+  flex-wrap: wrap;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.sub {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  max-width: 64ch;
+}
+
+.who {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: right;
+}
+
+.who strong {
+  color: var(--text);
+}
+
+/* ---- sign in ------------------------------------------------------------- */
+
+.signin {
+  margin: 0 1.75rem 2rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  max-width: 78ch;
+}
+
+.signin label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 0.3rem;
+}
+
+.hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+textarea {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  padding: 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+
+button {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.signin button {
+  margin-top: 0.7rem;
+}
+
+.err {
+  color: var(--bad);
+  font-size: 0.82rem;
+  margin: 0.6rem 0 0;
+  min-height: 1em;
+}
+
+/* ---- thread -------------------------------------------------------------- */
+
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0 1.75rem 1.5rem;
+  min-height: 0;
+}
+
+/* `display: flex` above outranks the user-agent rule for [hidden], so hiding the chat
+   until sign-in needs saying explicitly. */
+main[hidden] {
+  display: none;
+}
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding-bottom: 1rem;
+}
+
+.msg {
+  max-width: 76ch;
+  padding: 0.7rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.msg.agent {
+  align-self: flex-start;
+}
+
+.msg.error {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+/* ---- the chain ----------------------------------------------------------- */
+
+.chain {
+  align-self: flex-start;
+  max-width: 76ch;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 0.5rem 0.8rem;
+  background: transparent;
+  font-size: 0.8rem;
+}
+
+.chain-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.chain-step {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.12rem 0;
+  color: var(--muted);
+}
+
+.chain-step .mark {
+  color: var(--ok);
+}
+
+.chain-step.bad .mark,
+.chain-step.bad {
+  color: var(--bad);
+}
+
+.chain-step .what {
+  color: var(--text);
+  min-width: 15rem;
+}
+
+.tool {
+  align-self: flex-start;
+  font-size: 0.78rem;
+  font-family: var(--mono);
+  color: var(--agent);
+  background: color-mix(in srgb, var(--agent) 12%, transparent);
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+}
+
+/* ---- composer ------------------------------------------------------------ */
+
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.9rem;
+}
+
+.composer input {
+  flex: 1;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+}
+
+.composer input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.suggestions {
+  margin: 0.7rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.chip {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 400;
+  margin-right: 0.3rem;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- sign-in, raised mid-conversation ------------------------------------ */
+
+.authcard {
+  align-self: flex-start;
+  max-width: 60ch;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 0.9rem 1.05rem;
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+}
+
+.authcard.done {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--card));
+}
+
+.authcard-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin-bottom: 0.35rem;
+}
+
+.authcard.done .authcard-title {
+  color: var(--ok);
+}
+
+.authcard p {
+  margin: 0 0 0.7rem;
+  font-size: 0.88rem;
+}
+
+.authcard-note {
+  margin: 0.6rem 0 0 !important;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.authcard-note.bad {
+  color: var(--bad);
+}
+
+.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

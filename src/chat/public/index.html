@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Todos Agent</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Todos Agent</h1>
+        <p class="sub">
+          Running in Bedrock AgentCore. Ask it anything — it only asks you to sign in
+          when a request actually needs your todos, and never asks twice.
+        </p>
+      </div>
+      <div class="who" id="who"></div>
+    </header>
+
+    <main>
+      <div id="thread" class="thread">
+        <div class="msg agent">
+          Ask me about your todos. You don't need to sign in first — I'll ask when I
+          need to.
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <input id="prompt" type="text" autocomplete="off"
+               placeholder="Ask about your todos…" />
+        <button type="submit" id="send">Send</button>
+      </form>
+      <p class="suggestions">
+        Try:
+        <button class="chip" data-q="How does getting access to my todos actually work?">How does access work?</button>
+        <button class="chip" data-q="What's on my list?">What's on my list?</button>
+        <button class="chip" data-q="Add a high priority item to publish the ID-JAG signing cert">Add an item</button>
+      </p>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
