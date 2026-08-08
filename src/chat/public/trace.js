@@ -40,6 +40,16 @@ function label(span) {
   const step = span.attributes["xaa.step"];
   if (typeof step === "string") return step;
 
+  // The discovery walk, in the order it happens. Naming these is what turns a list of
+  // GETs into a story about a client working out how to get in.
+  if (url.includes("/.well-known/oauth-protected-resource"))
+    return "Discovery · what guards this resource";
+  if (url.includes("/.well-known/oauth-authorization-server"))
+    return "Discovery · what that server accepts";
+  if (url.includes("/.well-known/openid-configuration"))
+    return "Discovery · IdP metadata";
+  if (url.includes("bedrock-runtime")) return "Bedrock · Claude Opus 5";
+
   if (url.includes("/as/token.oauth2")) return "PingFederate · token exchange";
   if (url.includes("/pf/JWKS")) return "PingFederate · fetch signing keys";
   if (url.includes("/as/authorization")) return "PingFederate · sign in";
@@ -155,10 +165,25 @@ function highlights(spans) {
     });
   }
 
+  // An unauthenticated probe is *supposed* to be refused — that 401 is the start of
+  // discovery, not a failure. Only call it a rejection when nothing followed it.
+  const discovered = spans.some((s) =>
+    String(s.attributes["url.full"] ?? "").includes("/.well-known/"),
+  );
   const failed = spans.find(
     (s) => s.attributes["xaa.status"] === "fail" || s.status === "error",
   );
-  if (failed) {
+
+  if (failed && discovered) {
+    notes.unshift({
+      kind: "boundary",
+      title: "The resource refused first — as it should",
+      body:
+        "The agent called with no token and was challenged. Everything after this " +
+        "was worked out from that challenge: which authorization server guards the " +
+        "resource, and that it wants an ID-JAG.",
+    });
+  } else if (failed) {
     notes.unshift({
       kind: "fail",
       title: `Rejected at ${String(failed.attributes["xaa.step"] ?? failed.name)}`,

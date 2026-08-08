@@ -7,6 +7,7 @@ import { stepCountIs, streamText, tool, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import { loadModel } from './model/load.js';
 import { connectMcp } from './mcp.js';
+import { discoverAccessRequirements } from './discover.js';
 import { accessForSession, loadXaaConfig, type ChainStep } from './xaa.js';
 
 /**
@@ -40,18 +41,24 @@ same thing.`;
  * app, it calls request_sign_in rather than apologising, and the client turns that into
  * a real PingFederate login.
  */
-const ANONYMOUS_PROMPT = `You are a todos assistant, but nobody has signed in yet, so you
-currently have no access to anyone's todos.
+/**
+ * What the agent is told before anyone has signed in.
+ *
+ * Note what it is *not* told: that a login is required. It doesn't know that yet, and
+ * neither does anything else in this process. It is told only that it has one way to
+ * reach the todos, and to use it when a request needs them. Whether that path is open
+ * is decided by the resource server, not by this prompt.
+ */
+const ANONYMOUS_PROMPT = `You are a todos assistant.
 
-You can still answer questions about yourself and about how access works. If asked, you
-can explain: the person signs in once with PingFederate, and you then exchange that
-sign-in for a short-lived token scoped to their todos — they are never asked to log in
-to the todos app separately.
+Use the reach_todos tool whenever a request needs to read or change the person's todos.
+Do not guess at their list, do not invent items, and do not ask them to paste anything —
+call the tool and let it tell you what happens.
 
-The moment a request would need to read or change someone's todos, call the
-request_sign_in tool. Do not guess, do not invent a list, and do not ask them to paste
-anything. After calling it, say in one short sentence what you'll do once they're signed
-in. Do not call it for questions you can answer without their data.`;
+You can answer questions about yourself and about how access works without the tool.
+
+If the tool reports that access is gated, say in one short sentence what you will do once
+it opens. Do not speculate about why, and do not offer workarounds.`;
 
 const requestSchema = z.object({
   prompt: z.string().default(''),
@@ -129,25 +136,58 @@ const app = new BedrockAgentCoreApp({
         const userMessage: ModelMessage = { role: 'user', content: payload.prompt };
         const model = await loadModel();
 
-        let askedToSignIn = false;
+        // What the resource actually said, if we get as far as asking it. A holder
+        // rather than a bare `let`: it is written inside a tool closure, and control
+        // flow analysis cannot see that, so a plain variable narrows to `never` here.
+        const gate: { pending: { reason: string; scope: string | null } | null } = {
+          pending: null,
+        };
+        const discoverySteps: ChainStep[] = [];
+
         const result = streamText({
           model,
           system: ANONYMOUS_PROMPT,
           messages: [...history, userMessage],
           tools: {
-            request_sign_in: tool({
+            reach_todos: tool({
               description:
-                "Ask the person to sign in with PingFederate. Call this as soon as a " +
-                "request needs their todos and you have no access.",
+                "Reach the user's todos. Call this whenever a request needs to read " +
+                "or change them.",
               inputSchema: z.object({
-                reason: z
+                intent: z
                   .string()
-                  .describe('One short phrase: what you need access for.'),
+                  .describe('One short phrase: what you are trying to do.'),
               }),
-              execute: async ({ reason }) => {
-                askedToSignIn = true;
-                return `A sign-in prompt has been shown to the user (${reason}). Tell ` +
-                  `them briefly what you'll do once they are signed in.`;
+              execute: async ({ intent }) => {
+                // Try the resource for real. The 401 it returns — not this agent's
+                // opinion — is what establishes that a sign-in is needed, and the
+                // metadata it points at is what says an ID-JAG is the way in.
+                try {
+                  const discovery = await discoverAccessRequirements(
+                    loadXaaConfig().mcpResource,
+                    (step, detail, ok) =>
+                      discoverySteps.push({ step, detail, ok }),
+                  );
+                  gate.pending = {
+                    reason: intent,
+                    scope: discovery.challenge.scope,
+                  };
+                  return (
+                    `The todos server refused the call with 401 and asked for scope ` +
+                    `[${discovery.challenge.scope ?? '?'}]. Its metadata says access ` +
+                    `requires an ID-JAG, which requires the user's identity. A sign-in ` +
+                    `prompt has been shown. Tell them briefly what you'll do once it's done.`
+                  );
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+                  discoverySteps.push({
+                    step: 'Discovery failed',
+                    detail: message,
+                    ok: false,
+                  });
+                  return `Could not work out how to reach the todos: ${message}`;
+                }
               },
             }),
           },
@@ -155,20 +195,36 @@ const app = new BedrockAgentCoreApp({
         });
 
         let anonymousReply = '';
+        // The model writes on both sides of the tool call, and the two runs of text
+        // butt together ("I'll pull that up.There's a prompt...") without a break.
+        let brokeForTool = false;
         for await (const part of result.fullStream) {
+          if (part.type === 'tool-call') brokeForTool = true;
           if (part.type === 'text-delta') {
-            anonymousReply += part.text;
-            yield { data: part.text };
-          } else if (part.type === 'tool-call' && part.toolName === 'request_sign_in') {
-            // The client turns this into a login. It is the only way the agent can ask.
+            let text = part.text;
+            if (brokeForTool && anonymousReply.length > 0) {
+              text = `\n\n${text.replace(/^\s+/, '')}`;
+              brokeForTool = false;
+            }
+            anonymousReply += text;
+            yield { data: text };
+          }
+          // Discovery steps are emitted as they accumulate, so the pane shows the
+          // 401 and the metadata walk *before* the sign-in card appears.
+          while (discoverySteps.length > 0) {
+            yield trace({ type: 'chain', ...discoverySteps.shift()! });
+          }
+          if (gate.pending) {
             yield trace({
               type: 'auth-required',
-              reason: (part.input as { reason?: string })?.reason ?? 'access to your todos',
+              reason: gate.pending.reason,
+              scope: gate.pending.scope,
             });
+            gate.pending = null;
           }
         }
 
-        if (anonymousReply.length > 0 && !askedToSignIn) {
+        if (anonymousReply.length > 0 && discoverySteps.length === 0) {
           history.push(userMessage, { role: 'assistant', content: anonymousReply });
         }
         return;

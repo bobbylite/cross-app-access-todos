@@ -61,6 +61,20 @@ export interface Discovery {
 const ID_JAG_PROFILE = "urn:ietf:params:oauth:grant-profile:id-jag";
 const JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
+/**
+ * RFC 8414 3.1 well-known construction.
+ *
+ * The segment goes *between* host and path, so an issuer of `https://host/tenant1`
+ * resolves to `https://host/.well-known/oauth-authorization-server/tenant1` — not
+ * `.../tenant1/.well-known/...`. Only matters for multi-tenant issuers, which is
+ * exactly where getting it wrong is hardest to debug.
+ */
+export function wellKnownUrl(issuer: string, suffix: string): string {
+  const url = new URL(issuer);
+  const path = url.pathname.replace(/\/$/, "");
+  return `${url.origin}/.well-known/${suffix}${path}`;
+}
+
 async function getJson(url: string, what: string): Promise<Record<string, unknown>> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -126,6 +140,15 @@ export async function discoverAccessRequirements(
     authorizationServers: strings(prmDoc.authorization_servers),
     scopesSupported: strings(prmDoc.scopes_supported),
   };
+  if (resource.resource.replace(/\/$/, "") !== resourceUrl.replace(/\/$/, "")) {
+    throw new Error(
+      `The metadata at ${challenge.resourceMetadataUrl} describes ` +
+        `${resource.resource}, not ${resourceUrl}. Refusing to follow it — an ` +
+        `unvalidated pointer is how a hostile 401 sends a client to an authorization ` +
+        `server the attacker controls.`,
+    );
+  }
+
   onStep(
     "Read the resource's metadata",
     `It is guarded by ${resource.authorizationServers[0] ?? "(none named)"}`,
@@ -139,7 +162,7 @@ export async function discoverAccessRequirements(
 
   // ---- 3. Ask that authorization server what it accepts ---------------------------
   const asDoc = await getJson(
-    `${asIssuer.replace(/\/$/, "")}/.well-known/oauth-authorization-server`,
+    wellKnownUrl(asIssuer, "oauth-authorization-server"),
     "Authorization server metadata",
   );
   const authorizationServer: AuthorizationServerMetadata = {

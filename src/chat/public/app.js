@@ -192,7 +192,7 @@ async function streamTurn(prompt, pushChainStep) {
           addToolCall(event.name, event.args);
         } else if (event.type === "auth-required") {
           outcome = "auth-required";
-          addAuthPrompt(event.reason);
+          addAuthPrompt(event.reason, event.scope);
         }
         continue;
       }
@@ -209,13 +209,16 @@ async function streamTurn(prompt, pushChainStep) {
 
 let pendingAuthCard = null;
 
-function addAuthPrompt(reason) {
+function addAuthPrompt(reason, scope) {
   const el = document.createElement("div");
   el.className = "authcard";
   el.innerHTML =
     `<div class="authcard-title">Sign-in needed</div>` +
-    `<p>The agent needs your identity for <strong>${escapeHtml(reason)}</strong>. ` +
-    `You'll sign in to PingFederate once — not to the todos app.</p>`;
+    `<p>The todos server refused with <strong>401</strong>` +
+    (scope ? ` and asked for <code>${escapeHtml(scope)}</code>` : "") +
+    `. Its metadata says access needs an ID-JAG, which needs your identity — ` +
+    `for <strong>${escapeHtml(reason)}</strong>.</p>` +
+    `<p class="authcard-note">You sign in to PingFederate once, not to the todos app.</p>`;
 
   const button = document.createElement("button");
   button.textContent = loginAvailable

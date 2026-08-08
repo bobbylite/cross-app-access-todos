@@ -16,15 +16,33 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
  * the agent changes.
  */
 
+/**
+ * Where to send spans.
+ *
+ * `agentcore dev` sets OTEL_EXPORTER_OTLP_ENDPOINT to a local collector on :4318 that
+ * isn't running, so spans silently vanish — the SDK starts fine and reports nothing.
+ * Precedence here puts our own variable first, then the OTLP *traces* variable (a full
+ * URL by spec), then the OTLP *base* variable with /v1/traces appended as the spec
+ * requires. Only then the demo default.
+ */
+function tracesEndpoint(): string {
+  const explicit = process.env.XAA_OTLP_TRACES_URL?.trim();
+  if (explicit) return explicit;
+
+  const tracesVar = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?.trim();
+  if (tracesVar) return tracesVar;
+
+  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
+  if (base) return `${base.replace(/\/$/, '')}/v1/traces`;
+
+  return 'http://localhost:8083/v1/traces';
+}
+
 const sdk = new NodeSDK({
   resource: resourceFromAttributes({
     [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? 'todos-agent',
   }),
-  traceExporter: new OTLPTraceExporter({
-    url:
-      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
-      'http://localhost:8083/v1/traces',
-  }),
+  traceExporter: new OTLPTraceExporter({ url: tracesEndpoint() }),
   instrumentations: [
     new HttpInstrumentation({
       // The runtime's own health probes would outnumber the interesting spans.
@@ -42,6 +60,8 @@ const sdk = new NodeSDK({
 });
 
 sdk.start();
+// Worth one line at boot: a silently misdirected exporter is invisible otherwise.
+console.log(`[otel] exporting spans to ${tracesEndpoint()}`);
 
 process.once('SIGTERM', () => {
   void sdk.shutdown();
