@@ -15,6 +15,18 @@ export function authorizationServerMetadata(): Record<string, unknown> {
     token_endpoint: `${config.resourceAs.issuer}/token`,
     jwks_uri: `${config.resourceAs.issuer}/jwks.json`,
     grant_types_supported: [JWT_BEARER_GRANT],
+    /**
+     * The grant *profile*, which is what actually tells a client what to bring.
+     *
+     * `jwt-bearer` alone says "present an assertion" without saying which kind. This
+     * says the assertion must be an ID-JAG, so a client that has never seen this server
+     * before can work out — from metadata alone — that it needs a token exchange at its
+     * own IdP first. Linear publishes the same field on its live MCP authorization
+     * server, so this is the interoperable spelling rather than ours.
+     */
+    authorization_grant_profiles_supported: [
+      "urn:ietf:params:oauth:grant-profile:id-jag",
+    ],
     token_endpoint_auth_methods_supported: [
       "client_secret_basic",
       "client_secret_post",

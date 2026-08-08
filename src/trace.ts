@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { recordStep } from "./otel/spans.js";
 
 /**
  * The narration layer. Every validation step publishes exactly one event here, which
@@ -78,6 +79,11 @@ export class Trace {
       at: new Date().toISOString(),
     };
     publish(event);
+
+    // The same narration, as an OpenTelemetry span. One line here is why the ten checks
+    // appear in the distributed trace without any call site knowing about OTel.
+    recordStep(step);
+
     const mark = STATUS_MARK[step.status];
     const suffix = step.error ? ` (${step.error})` : "";
     console.log(

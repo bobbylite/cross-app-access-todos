@@ -4,6 +4,7 @@ import type { SigningKeys } from "../keys.js";
 import { Trace } from "../trace.js";
 import { authenticateClient } from "./clients.js";
 import { OAuthError } from "./errors.js";
+import { annotate } from "../otel/spans.js";
 import { issueAccessToken } from "./issueToken.js";
 import { applyPolicy } from "./policy.js";
 import { resolveSubject } from "./subjects.js";
@@ -89,6 +90,23 @@ export function tokenEndpoint(keys: SigningKeys) {
       );
 
       // ---- Step 9: mint ----------------------------------------------------------
+      // The identity facts, on the span that represents this redemption. An identity
+      // audience cares about exactly these: the person stayed the same across the
+      // boundary, the audience changed, and the scope may have narrowed.
+      annotate({
+        "xaa.identity.idp_subject": claims.sub,
+        "xaa.identity.local_subject": user.localId,
+        "xaa.identity.jit_provisioned": created,
+        "xaa.token.in.typ": "oauth-id-jag+jwt",
+        "xaa.token.in.aud": String(claims.aud ?? ""),
+        "xaa.token.in.iss": String(claims.iss ?? ""),
+        "xaa.token.out.aud": decision.resource,
+        "xaa.scope.requested": decision.requestedScope.join(" "),
+        "xaa.scope.granted": decision.grantedScope.join(" "),
+        "xaa.scope.narrowed": decision.narrowed,
+        "xaa.actor.client_id": String(claims.client_id ?? ""),
+      });
+
       const issued = await issueAccessToken(
         keys,
         user,

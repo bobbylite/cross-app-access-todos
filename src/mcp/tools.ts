@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Trace } from "../trace.js";
 import type { AuthContext } from "./auth.js";
+import { recordAudit } from "../todos/audit.js";
 import {
   completeTodo,
   countTodos,
@@ -23,6 +24,30 @@ export const TOOL_SCOPES: Record<string, string> = {
   complete_todo: "todos.write",
   update_todo: "todos.write",
 };
+
+/**
+ * Writes the on-behalf-of record for a tool call.
+ *
+ * Every write goes through here, so the todos app can never mutate a person's data
+ * without recording whose data it was, who the IdP said that is, and which client was
+ * holding the token. `delegated` is the whole point — the app knows this was not a
+ * service account acting on its own behalf.
+ */
+function auditToolCall(
+  auth: AuthContext,
+  action: string,
+  detail: string,
+): void {
+  recordAudit({
+    action,
+    subject: auth.subject,
+    idpSubject: auth.idpSubject,
+    actorClient: auth.clientId,
+    authority: "delegated",
+    scope: auth.scopes.join(" "),
+    detail,
+  });
+}
 
 function text(payload: unknown) {
   return {
@@ -73,6 +98,7 @@ export function registerTodoTools(
         "B. tools/call list_todos",
         `Returned ${todos.length} row(s)${status ? ` with status=${status}` : ""} for ${owner}`,
       );
+      auditToolCall(auth, "list_todos", `read ${todos.length} item(s)`);
       return text({ todos });
     },
   );
@@ -122,6 +148,7 @@ export function registerTodoTools(
         "B. tools/call create_todo",
         `Wrote '${todo.id}' (${todo.priority}) for ${owner}`,
       );
+      auditToolCall(auth, "create_todo", `created "${todo.title}"`);
       return text({ todo });
     },
   );
@@ -146,6 +173,7 @@ export function registerTodoTools(
         return failure(`No todo with id '${id}'`);
       }
       trace.pass("B. tools/call complete_todo", `Closed '${todo.id}' for ${owner}`);
+      auditToolCall(auth, "complete_todo", `completed "${todo.title}"`);
       return text({ todo });
     },
   );
@@ -182,6 +210,7 @@ export function registerTodoTools(
         return failure(`No todo with id '${id}'`);
       }
       trace.pass("B. tools/call update_todo", `Updated '${todo.id}' for ${owner}`);
+      auditToolCall(auth, "update_todo", `updated "${todo.title}"`);
       return text({ todo });
     },
   );

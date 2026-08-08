@@ -1,3 +1,7 @@
+// Must be first: OpenTelemetry patches http/express/fetch as they load, so anything
+// imported above this line would be invisible to the trace.
+import "./otel/bootstrap.js";
+
 import type express from "express";
 import { createChatApp } from "./chat/server.js";
 import { assertConfigValid, config } from "./config.js";

@@ -1,3 +1,7 @@
+// Must be first: OpenTelemetry patches http and fetch as they load, so anything
+// imported above this line would be invisible to the trace.
+import './otel.js';
+
 import { BedrockAgentCoreApp } from 'bedrock-agentcore/runtime';
 import { stepCountIs, streamText, tool, type ModelMessage } from 'ai';
 import { z } from 'zod';

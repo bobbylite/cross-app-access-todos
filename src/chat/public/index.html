@@ -8,36 +8,68 @@
   </head>
   <body>
     <header>
-      <div>
+      <div class="brand">
         <h1>Todos Agent</h1>
         <p class="sub">
-          Running in Bedrock AgentCore. Ask it anything — it only asks you to sign in
-          when a request actually needs your todos, and never asks twice.
+          One sign-in. Two trust domains. Every hop on the right, as it happens.
         </p>
       </div>
       <div class="who" id="who"></div>
     </header>
 
-    <main>
-      <div id="thread" class="thread">
-        <div class="msg agent">
-          Ask me about your todos. You don't need to sign in first — I'll ask when I
-          need to.
+    <div class="split">
+      <!-- ---------- conversation ---------- -->
+      <section class="pane pane-chat">
+        <div id="thread" class="thread">
+          <div class="msg agent">
+            Ask me about your todos. You don't need to sign in first — I'll ask when I
+            need to.
+          </div>
         </div>
-      </div>
 
-      <form id="composer" class="composer">
-        <input id="prompt" type="text" autocomplete="off"
-               placeholder="Ask about your todos…" />
-        <button type="submit" id="send">Send</button>
-      </form>
-      <p class="suggestions">
-        Try:
-        <button class="chip" data-q="How does getting access to my todos actually work?">How does access work?</button>
-        <button class="chip" data-q="What's on my list?">What's on my list?</button>
-        <button class="chip" data-q="Add a high priority item to publish the ID-JAG signing cert">Add an item</button>
-      </p>
-    </main>
+        <form id="composer" class="composer">
+          <input id="prompt" type="text" autocomplete="off"
+                 placeholder="Ask about your todos…" />
+          <button type="submit" id="send">Send</button>
+        </form>
+        <p class="suggestions">
+          <button class="chip" data-q="How does getting access to my todos actually work?">How does access work?</button>
+          <button class="chip" data-q="What's on my list?">What's on my list?</button>
+          <button class="chip" data-q="Add a high priority item to publish the ID-JAG signing cert">Add an item</button>
+        </p>
+      </section>
+
+      <!-- ---------- trace ---------- -->
+      <aside class="pane pane-trace">
+        <div class="trace-head">
+          <div>
+            <h2>Distributed trace</h2>
+            <p class="trace-sub" id="trace-sub">
+              OpenTelemetry, live. Waiting for the first turn…
+            </p>
+          </div>
+          <div class="trace-total" id="trace-total"></div>
+        </div>
+
+        <div id="ribbon" class="ribbon"></div>
+
+        <div class="legend">
+          <span class="key key-agent"><i></i>Caller domain</span>
+          <span class="key key-identity"><i></i>Identity provider</span>
+          <span class="key key-resource"><i></i>Resource domain</span>
+        </div>
+
+        <div id="waterfall" class="waterfall">
+          <p class="empty">
+            Ask something that needs your todos and the whole chain appears here —
+            the token exchange, the ten checks, the tool call.
+          </p>
+        </div>
+
+        <div id="highlights" class="highlights"></div>
+        <div id="obo" class="obo"></div>
+      </aside>
+    </div>
 
     <script type="module" src="/app.js"></script>
   </body>

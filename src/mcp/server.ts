@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { config } from "../config.js";
 import type { SigningKeys } from "../keys.js";
 import { Trace } from "../trace.js";
+import { annotate } from "../otel/spans.js";
 import { protectedResourceMetadata } from "../resource-as/metadata.js";
 import { mountTodosApp } from "../todos/app.js";
 import { type AuthContext, bearerAuth, insufficientScope } from "./auth.js";
@@ -51,6 +52,16 @@ export function createMcpApp(keys: SigningKeys): express.Express {
   // ---- Everything below needs a valid access token --------------------------------
   app.post("/mcp", bearerAuth(keys), async (req, res) => {
     const auth = res.locals.auth as AuthContext;
+
+    // Who the resource server thinks is calling, and on whose authority. This is the
+    // span that proves the person survived the last hop.
+    annotate({
+      "xaa.identity.local_subject": auth.subject,
+      "xaa.identity.idp_subject": auth.idpSubject ?? "",
+      "xaa.actor.client_id": auth.clientId ?? "",
+      "xaa.scope.presented": auth.scopes.join(" "),
+      "xaa.authority": "delegated",
+    });
     const trace = (res.locals.trace as Trace) ?? new Trace("mcp");
 
     // Scope enforcement happens here rather than inside the tool, so the failure is a

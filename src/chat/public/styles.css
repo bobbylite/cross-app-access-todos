@@ -13,6 +13,9 @@
   --ok: #2f9e44;
   --bad: #e03131;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --d-agent: #7048e8;
+  --d-identity: #f08c00;
+  --d-resource: #0ca678;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +29,9 @@
     --agent: #b197fc;
     --ok: #69db7c;
     --bad: #ff8787;
+    --d-agent: #b197fc;
+    --d-identity: #ffc078;
+    --d-resource: #38d9a9;
   }
 }
 
@@ -35,6 +41,8 @@
 
 body {
   margin: 0;
+  height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font:
@@ -144,19 +152,6 @@ button:disabled {
 
 /* ---- thread -------------------------------------------------------------- */
 
-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 0 1.75rem 1.5rem;
-  min-height: 0;
-}
-
-/* `display: flex` above outranks the user-agent rule for [hidden], so hiding the chat
-   until sign-in needs saying explicitly. */
-main[hidden] {
-  display: none;
-}
 
 .thread {
   flex: 1;
@@ -343,4 +338,432 @@ main[hidden] {
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+
+/* ---- two-pane layout ------------------------------------------------------
+   Conversation left, trace right. The trace is not a debug panel bolted on —
+   it is the second half of the argument, so it gets equal billing. */
+
+.split {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 1rem;
+  padding: 0 1.75rem 1.5rem;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pane-trace {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  padding: 1rem 1.1rem;
+  overflow: hidden;
+}
+
+.brand h1 {
+  margin: 0;
+}
+
+/* ---- trace header ---------------------------------------------------------- */
+
+.trace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.trace-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.trace-sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.trace-total {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+/* ---- domain legend --------------------------------------------------------- */
+
+.legend {
+  display: flex;
+  gap: 0.9rem;
+  margin: 0.75rem 0 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.key i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.key-agent i { background: var(--d-agent); }
+.key-identity i { background: var(--d-identity); }
+.key-resource i { background: var(--d-resource); }
+
+/* ---- waterfall ------------------------------------------------------------- */
+
+.waterfall {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 0.25rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 15rem) 1fr 3.4rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.16rem 0;
+  font-size: 0.78rem;
+  border-radius: 5px;
+}
+
+.row:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.row-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-left: calc(var(--depth) * 0.85rem);
+  min-width: 0;
+}
+
+.row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-step .row-name {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.row-fail .row-name {
+  color: var(--bad);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot-agent { background: var(--d-agent); }
+.dot-identity { background: var(--d-identity); }
+.dot-resource { background: var(--d-resource); }
+.dot-unknown { background: var(--muted); }
+
+.row-track {
+  position: relative;
+  height: 13px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  overflow: hidden;
+}
+
+.bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  min-width: 2px;
+}
+
+.bar-agent { background: var(--d-agent); }
+.bar-identity { background: var(--d-identity); }
+.bar-resource { background: var(--d-resource); }
+.bar-unknown { background: var(--muted); }
+.bar-fail { background: var(--bad); }
+
+.row-ms {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* ---- the point being made -------------------------------------------------- */
+
+.highlights {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.8rem;
+}
+
+.note {
+  border-left: 2px solid var(--line);
+  padding-left: 0.65rem;
+}
+
+.note-decision { border-left-color: var(--d-resource); }
+.note-timing { border-left-color: var(--d-identity); }
+.note-boundary { border-left-color: var(--d-agent); }
+
+.note-title {
+  font-size: 0.79rem;
+  font-weight: 600;
+}
+
+.note-body {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.1rem;
+}
+
+.note-fail { border-left-color: var(--bad); }
+.note-fail .note-title { color: var(--bad); }
+
+/* ---- identity continuity ribbon --------------------------------------------
+   The headline claim of the pane. An identity audience reads this first and the
+   waterfall second, so it sits above the chart and gets the strongest contrast. */
+
+.ribbon:empty { display: none; }
+
+.ribbon {
+  margin: 0.85rem 0 0.2rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--d-resource) 35%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--d-resource) 6%, transparent);
+}
+
+.ribbon-title {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--muted);
+  margin-bottom: 0.55rem;
+}
+
+.hops {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+  overflow-x: auto;
+}
+
+.hop {
+  flex: 1 1 0;
+  min-width: 8.5rem;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--muted);
+}
+
+.hop-identity { border-top-color: var(--d-identity); }
+.hop-resource { border-top-color: var(--d-resource); }
+.hop-agent { border-top-color: var(--d-agent); }
+
+.hop-where {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+/* The subject is the one thing that must not change. Give it the most weight. */
+.hop-subject {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin: 0.15rem 0 0.1rem;
+  overflow-wrap: anywhere;
+}
+
+.hop-token {
+  font-size: 0.67rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.hop-rows {
+  margin: 0;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.hop-rows > div {
+  display: grid;
+  grid-template-columns: 3.4rem 1fr;
+  gap: 0.3rem;
+}
+
+.hop-rows dt {
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.hop-rows dd {
+  margin: 0;
+  font-size: 0.66rem;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.hop-arrow {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  flex: none;
+}
+
+.verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.verdict-mark {
+  color: var(--d-resource);
+  font-weight: 700;
+}
+
+.verdict strong {
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+/* ---- the target system's own log -------------------------------------------- */
+
+.obo:empty { display: none; }
+
+.obo {
+  margin-top: 0.8rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+  max-height: 11rem;
+  overflow-y: auto;
+}
+
+.obo-title {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+}
+
+.obo-note {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.75;
+  margin-left: 0.35rem;
+}
+
+.obo-row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.22rem 0;
+  align-items: flex-start;
+}
+
+.badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.32rem;
+  border-radius: 4px;
+  flex: none;
+  margin-top: 0.1rem;
+}
+
+.badge-delegated {
+  background: color-mix(in srgb, var(--d-agent) 20%, transparent);
+  color: var(--d-agent);
+}
+
+.badge-session {
+  background: color-mix(in srgb, var(--muted) 20%, transparent);
+  color: var(--muted);
+}
+
+.obo-line { font-size: 0.76rem; }
+
+.obo-actor,
+.obo-subject {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.obo-actor { color: var(--d-agent); }
+.obo-subject { color: var(--text); }
+
+/* "on behalf of" is the phrase the room needs to notice. */
+.obo-obo {
+  color: var(--d-resource);
+  font-weight: 600;
+}
+
+.obo-meta {
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+/* The pane is a flex column with five children; without a floor the waterfall — the
+   part that actually needs vertical room — collapses to a sliver on short screens. */
+.waterfall {
+  min-height: 7.5rem;
+}
+
+.obo {
+  max-height: 8.5rem;
+  flex: none;
+}
+
+.ribbon {
+  flex: none;
 }

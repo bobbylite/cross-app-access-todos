@@ -1,3 +1,5 @@
+import { discoverAccessRequirements, type Discovery } from './discover.js';
+
 /**
  * Cross App Access, from the agent's side.
  *
@@ -88,17 +90,22 @@ function peek(jwt: string): Record<string, unknown> {
  */
 async function exchangeForIdJag(
   config: XaaConfig,
+  discovery: Discovery,
   subjectToken: string,
   steps: ChainStep[],
 ): Promise<string> {
+  // Audience and resource come from what discovery found, not from configuration. That
+  // is the difference between a client that was told where to go and one that worked
+  // it out — and it is why pointing this agent at a different MCP server would just
+  // work.
   const body = new URLSearchParams({
     grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
     requested_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
     subject_token: subjectToken,
     subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
-    audience: config.resourceAsIssuer,
-    resource: config.mcpResource,
-    scope: config.scope,
+    audience: discovery.authorizationServer.issuer,
+    resource: discovery.resource.resource,
+    scope: discovery.challenge.scope ?? config.scope,
   });
 
   const response = await fetch(config.pfTokenEndpoint, {
@@ -151,10 +158,11 @@ async function exchangeForIdJag(
 /** Step 2 — redeem the assertion at the Resource AS, which runs its own ten checks. */
 async function redeemIdJag(
   config: XaaConfig,
+  discovery: Discovery,
   idJag: string,
   steps: ChainStep[],
 ): Promise<{ accessToken: string; scope: string; expiresIn: number }> {
-  const response = await fetch(config.resourceAsTokenEndpoint, {
+  const response = await fetch(discovery.authorizationServer.tokenEndpoint, {
     method: 'POST',
     headers: {
       Authorization: basicAuth(config.clientId, config.clientSecret),
@@ -226,8 +234,14 @@ export async function accessForSession(
     ok: true,
   });
 
-  const idJag = await exchangeForIdJag(config, callerToken, steps);
-  const granted = await redeemIdJag(config, idJag, steps);
+  // Ask the resource what it wants before assuming anything.
+  const discovery = await discoverAccessRequirements(
+    config.mcpResource,
+    (step, detail, ok) => steps.push({ step, detail, ok }),
+  );
+
+  const idJag = await exchangeForIdJag(config, discovery, callerToken, steps);
+  const granted = await redeemIdJag(config, discovery, idJag, steps);
 
   const result: GrantedAccess = {
     accessToken: granted.accessToken,

@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import { recentAudit, recordAudit } from "./audit.js";
 import { databasePath } from "./db.js";
 import { clearSession, issueSession, sessionUser } from "./session.js";
 import {
@@ -119,6 +120,14 @@ export function mountTodosApp(app: express.Express): void {
       },
       "user",
     );
+    recordAudit({
+      action: "create_todo",
+      subject: user.id,
+      idpSubject: user.idpSubject,
+      actorClient: null,
+      authority: "session",
+      detail: `created "${todo.title}"`,
+    });
     res.status(201).json({ todo });
   });
 
@@ -131,7 +140,20 @@ export function mountTodosApp(app: express.Express): void {
       res.status(404).json({ error: "no such todo" });
       return;
     }
+    recordAudit({
+      action: "complete_todo",
+      subject: user.id,
+      idpSubject: user.idpSubject,
+      actorClient: null,
+      authority: "session",
+      detail: `completed "${todo.title}"`,
+    });
     res.json({ todo });
+  });
+
+  /** The target system's own record of who did what, for whom, under what authority. */
+  app.get("/api/audit", (_req, res) => {
+    res.json({ entries: recentAudit(15) });
   });
 
   // ---- live updates ---------------------------------------------------------------

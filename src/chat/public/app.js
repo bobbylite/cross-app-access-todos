@@ -1,3 +1,5 @@
+import { connectTraces } from "./trace.js";
+
 // Chat client. Streams SSE from the local proxy, which forwards to the AgentCore
 // runtime. Trace frames are drawn as the auth chain rather than printed as text.
 //
@@ -300,4 +302,5 @@ for (const chip of document.querySelectorAll(".chip")) {
 }
 
 await refreshSession();
+connectTraces();
 promptEl.focus();

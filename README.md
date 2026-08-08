@@ -301,6 +301,58 @@ After that the chain is drawn in the transcript as it happens, and each tool cal
 as its own line, so *"what's on my list?"* shows the exchange, the redemption, and
 `list_todos` before the answer arrives.
 
+### The trace pane
+
+The right half of the chat screen is a live OpenTelemetry waterfall. Real SDKs, real W3C
+context propagation, real OTLP over HTTP — the only unusual part is where the spans go.
+
+**The chat app is its own collector.** Every process exports to `POST /v1/traces` on port
+8083, which assembles traces and streams them to the browser. That's deliberate: the
+argument being made is that the trace *is* the explanation, and sending an audience to a
+second tool loses the moment. Repointing `OTEL_EXPORTER_OTLP_ENDPOINT` at Jaeger or
+CloudWatch is a one-variable change and nothing else moves.
+
+**Colour encodes trust domain, not service** — caller, identity provider, resource. That's
+the only thing on screen using those three hues, because the boundary crossing is the
+whole point. The JWKS fetch shows as *identity* orange even though the Resource AS made
+the call, which is the correct reading: that request left the resource domain.
+
+The pane is built for an identity audience, so it answers identity questions first:
+
+**Identity continuity ribbon** (top). The same person across every hop, with the token
+shape at each — PingFederate's subject, the Resource AS's local subject, and who the
+todos app thinks it is acting for. The audience changes at every hop; the subject does
+not, and the ribbon says so explicitly rather than leaving it to be inferred.
+
+**The target system's audit log** (bottom). Not the agent's telemetry — the todos app's
+own record, written by [audit.ts](src/todos/audit.ts) on every tool call:
+
+```
+OBO  postman-oidc on behalf of user_84cab92a
+     create_todo · created "Publish the ID-JAG signing cert" · idp pf-ryland
+```
+
+Three parties, deliberately not interchangeable: the **actor** that held the token, the
+**subject** whose data it is, and the **idp** identifier linking that person upstream. A
+service-account integration records one identity for every row and loses the person
+entirely — that difference is the argument, so the target system writes it down. Writes
+made by a human in the app UI are recorded as `self` authority alongside, which is what
+makes the `OBO` badge legible.
+
+Three more things the pane gives you that prose can't:
+
+- **The ten checks are spans**, nested under `POST /token`, each with `xaa.step`,
+  `xaa.status` and `xaa.detail` attributes. One line in [trace.ts](src/trace.ts) does
+  this — the console and the trace are two consumers of one narration.
+- **Key discovery has a number.** The first JWKS fetch costs ~90ms and the second ~26ms.
+  You can point at that instead of describing it.
+- **Failures name themselves.** A rejected step turns red and is restated underneath with
+  the values that were compared.
+
+There is no OTel semantic convention for authorization decisions, so `xaa.*` is ours.
+That's a feature: *"show me every redemption where granted scope was narrower than
+requested"* becomes a query rather than a story.
+
 ### Configuring sign-in
 
 The chat client needs **its own** PingFederate OAuth client — separate from the one that

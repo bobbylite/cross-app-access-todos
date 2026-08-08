@@ -2,6 +2,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { config } from "../config.js";
+import { auditEvents } from "../todos/audit.js";
+import { ingest, subscribe } from "./collector.js";
 import { beginLogin, completeLogin, oidcConfigured } from "./oidc.js";
 import { clearSession, createSession, publicView, readSession } from "./session.js";
 
@@ -24,6 +26,47 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), "public");
 export function createChatApp(agentUrl: string): express.Express {
   const app = express();
   app.use(express.json({ limit: "256kb" }));
+
+  // ---- OTLP receiver ------------------------------------------------------------
+  //
+  // Every process in the demo exports here. Spans arrive in batches, so a trace is
+  // assembled over several of these before it is complete.
+
+  app.post(
+    "/v1/traces",
+    express.json({ limit: "8mb", type: () => true }),
+    (req, res) => {
+      try {
+        ingest(req.body as Parameters<typeof ingest>[0]);
+      } catch {
+        // A malformed export must never take the chat down mid-demo.
+      }
+      res.status(200).json({ partialSuccess: {} });
+    },
+  );
+
+  /** Live traces, pushed as they are assembled. */
+  app.get("/api/traces/stream", (req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+
+    // Deliberately no replay of stored traces. A refresh is how you clear the stage
+    // before presenting, so the pane shows only what happens from now on.
+    const unsubscribe = subscribe((trace) => {
+      res.write(`data: ${JSON.stringify(trace)}\n\n`);
+    });
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  });
 
   // ---- who am I ---------------------------------------------------------------
 
@@ -174,6 +217,36 @@ export function createChatApp(agentUrl: string): express.Express {
       );
       res.end();
     }
+  });
+
+  /**
+   * The target system's own log, streamed to the pane.
+   *
+   * Read straight from the todos app's audit table rather than over HTTP — all three
+   * listeners share a process. What matters is that this is the *resource app's*
+   * record, not the agent's telemetry: the distinction between "the agent did this"
+   * and "the agent did this for Ryland" is one the target system has to be able to
+   * make on its own.
+   */
+  app.get("/api/obo/stream", (req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+
+    const onAudit = (entry: unknown) => {
+      res.write(`data: ${JSON.stringify({ entry })}\n\n`);
+    };
+    auditEvents.on("audit", onAudit);
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      auditEvents.off("audit", onAudit);
+    });
   });
 
   app.get("/api/config", (_req, res) => {
