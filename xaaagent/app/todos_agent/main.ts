@@ -231,9 +231,13 @@ const app = new BedrockAgentCoreApp({
       }
 
       // ---- the chain -------------------------------------------------------------
+      // Start at the floor. Reading is the least a todos turn can need, so that is
+      // what is asked for; a write earns its extra scope by being refused first. The
+      // resource sets the ceiling, not the agent.
+      let scopes = ['todos.read'];
       let granted;
       try {
-        granted = await accessForSession(loadXaaConfig(), sessionId, token);
+        granted = await accessForSession(loadXaaConfig(), sessionId, token, scopes);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         yield trace({ type: 'chain-failed', detail: message });
@@ -246,12 +250,38 @@ const app = new BedrockAgentCoreApp({
       }
 
       // ---- tools -----------------------------------------------------------------
+      //
+      // Steps produced mid-turn by a scope step-up. Queued rather than yielded, because
+      // the step-up happens inside a tool call and a generator can't yield from there.
+      const stepUps: ChainStep[] = [];
+
+      /**
+       * Widens the grant, but only because the resource asked for it.
+       *
+       * The 403 named the scope, so the server sets the ceiling rather than the client
+       * guessing. A whole fresh chain runs — new exchange, new assertion, new access
+       * token — because the narrow one genuinely is not sufficient. Returns the wider
+       * token so the tool call can be retried on it.
+       */
+      const stepUp = async (required: string[]): Promise<string> => {
+        const before = scopes.join(' ');
+        scopes = [...new Set([...scopes, ...required])].sort();
+        stepUps.push({
+          step: 'Scope step-up',
+          detail:
+            `Refused with 403, which named [${required.join(' ')}]. Re-running the ` +
+            `chain for [${scopes.join(' ')}] — was [${before}]`,
+          ok: true,
+        });
+        granted = await accessForSession(loadXaaConfig(), sessionId, token, scopes);
+        for (const step of granted.steps) stepUps.push(step);
+        return granted.accessToken;
+      };
+
       const session = await connectMcp(
         loadXaaConfig().mcpResource,
         granted.accessToken,
-        () => {
-          /* announced below via onStepFinish, which has the arguments resolved */
-        },
+        { onStepUp: stepUp },
       );
 
       try {
@@ -286,6 +316,15 @@ const app = new BedrockAgentCoreApp({
           // Tool traces are emitted between text chunks so the UI can interleave them
           // with the reply as it streams.
           while (pending.length > 0) yield pending.shift()!;
+          // A step-up may have happened inside a tool call; drain it here, where
+          // yielding is possible.
+          while (stepUps.length > 0) {
+            yield trace({ type: 'chain', ...stepUps.shift()! });
+          }
+        }
+
+        while (stepUps.length > 0) {
+          yield trace({ type: 'chain', ...stepUps.shift()! });
         }
 
         if (assistant.length > 0) {

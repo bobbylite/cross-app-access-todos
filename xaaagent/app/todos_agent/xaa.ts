@@ -92,6 +92,7 @@ async function exchangeForIdJag(
   config: XaaConfig,
   discovery: Discovery,
   subjectToken: string,
+  wanted: string,
   steps: ChainStep[],
 ): Promise<string> {
   // Audience and resource come from what discovery found, not from configuration. That
@@ -105,7 +106,10 @@ async function exchangeForIdJag(
     subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
     audience: discovery.authorizationServer.issuer,
     resource: discovery.resource.resource,
-    scope: discovery.challenge.scope ?? config.scope,
+    // Least privilege. The challenge tells us what the resource *offers*; it is not a
+    // shopping list. Ask for what this turn actually needs and nothing more — an
+    // over-broad grant is one nobody notices until it is abused.
+    scope: wanted,
   });
 
   const response = await fetch(config.pfTokenEndpoint, {
@@ -220,8 +224,15 @@ export async function accessForSession(
   config: XaaConfig,
   sessionId: string,
   callerToken: string,
+  scopes: string[],
 ): Promise<GrantedAccess> {
-  const cached = cache.get(sessionId);
+  // Keyed by scope as well as session. A token granted `todos.read` is not a cache hit
+  // for a turn that needs `todos.write`, and treating it as one would quietly hand back
+  // an under-scoped token — or, worse the other way, keep a broad one alive.
+  const wanted = [...new Set(scopes)].sort().join(' ');
+  const key = `${sessionId}|${wanted}`;
+
+  const cached = cache.get(key);
   if (cached && cached.expiresAt - EXPIRY_SKEW_MS > Date.now()) {
     return { ...cached, steps: [] };
   }
@@ -240,7 +251,21 @@ export async function accessForSession(
     (step, detail, ok) => steps.push({ step, detail, ok }),
   );
 
-  const idJag = await exchangeForIdJag(config, discovery, callerToken, steps);
+  steps.push({
+    step: 'Scope decided',
+    detail:
+      `Asking for [${wanted}] — the least this turn needs. The resource offers ` +
+      `[${discovery.challenge.scope ?? '?'}]`,
+    ok: true,
+  });
+
+  const idJag = await exchangeForIdJag(
+    config,
+    discovery,
+    callerToken,
+    wanted,
+    steps,
+  );
   const granted = await redeemIdJag(config, discovery, idJag, steps);
 
   const result: GrantedAccess = {
@@ -249,6 +274,6 @@ export async function accessForSession(
     expiresAt: Date.now() + granted.expiresIn * 1000,
     steps,
   };
-  cache.set(sessionId, result);
+  cache.set(key, result);
   return result;
 }
