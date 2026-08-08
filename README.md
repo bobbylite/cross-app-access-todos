@@ -42,6 +42,11 @@ Fill in `.env` (see [Configuration](#configuration)), then:
 npm run dev
 ```
 
+For local agentcore
+```bash
+cd /Users/bobby/source/repos/agentic-cross-domain-access-demo/xaaagent && /opt/homebrew/bin/agentcore dev --skip-deploy --logs
+```
+
 That starts two listeners in one process:
 
 | | |
