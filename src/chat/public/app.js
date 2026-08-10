@@ -1,3 +1,4 @@
+import { renderMarkdownLite } from "./markdown.js";
 import { connectTraces } from "./trace.js";
 
 // Chat client. Streams SSE from the local proxy, which forwards to the AgentCore
@@ -33,10 +34,18 @@ function scrollDown() {
   threadEl.scrollTop = threadEl.scrollHeight;
 }
 
+// The user typed their own bubble; it's shown as plain text, not rendered. Everything
+// the *agent* says goes through the markdown-lite renderer, since that's the surface
+// this fixes — bold, lists, inline code showing as actual formatting rather than raw
+// asterisks.
 function addMessage(role, text = "") {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
-  el.textContent = text;
+  if (role.startsWith("agent")) {
+    el.innerHTML = renderMarkdownLite(text);
+  } else {
+    el.textContent = text;
+  }
   threadEl.appendChild(el);
   scrollDown();
   return el;
@@ -155,6 +164,11 @@ async function streamTurn(prompt, pushChainStep) {
   const decoder = new TextDecoder();
   let buffer = "";
   let reply = null;
+  // The raw markdown accumulates here; the DOM only ever holds the rendered HTML, so
+  // this is the thing re-parsed on every chunk rather than reading it back out of
+  // innerHTML (which would be lossy — the markdown source doesn't round-trip through
+  // the tags it became).
+  let replyText = "";
   let outcome = "done";
 
   for (;;) {
@@ -198,12 +212,13 @@ async function streamTurn(prompt, pushChainStep) {
       }
 
       if (!reply) reply = addMessage("agent");
-      reply.textContent += chunk;
+      replyText += chunk;
+      reply.innerHTML = renderMarkdownLite(replyText);
       scrollDown();
     }
   }
 
-  if (reply && reply.textContent.length === 0) reply.remove();
+  if (reply && replyText.length === 0) reply.remove();
   return outcome;
 }
 

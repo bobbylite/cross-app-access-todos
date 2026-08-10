@@ -16,7 +16,7 @@ const bedrock = createAmazonBedrock({
 });
 
 /**
- * Claude Opus 5 through a cross-region inference profile.
+ * Claude haiku 4.5 through a cross-region inference profile.
  *
  * Bedrock invocation uses the profile id (`us.` prefix), not the bare model id
  * `anthropic.claude-opus-5` that `list-foundation-models` reports — both exist in

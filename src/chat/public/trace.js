@@ -48,7 +48,7 @@ function label(span) {
     return "Discovery · what that server accepts";
   if (url.includes("/.well-known/openid-configuration"))
     return "Discovery · IdP metadata";
-  if (url.includes("bedrock-runtime")) return "Bedrock · Claude Opus 5";
+  if (url.includes("bedrock-runtime")) return "Bedrock · Claude Haiku 4.5";
 
   if (url.includes("/as/token.oauth2")) return "PingFederate · token exchange";
   if (url.includes("/pf/JWKS")) return "PingFederate · fetch signing keys";
@@ -56,7 +56,7 @@ function label(span) {
   if (url.match(/:8081\/token/)) return "Resource AS · redeem ID-JAG";
   if (url.match(/:8082\/mcp/)) return "Todos MCP · tool call";
   if (url.includes("/invocations")) return "Agent · turn";
-  if (url.includes("bedrock")) return "Bedrock · Claude Opus 5";
+  if (url.includes("bedrock")) return "Bedrock · Claude Haiku 4.5";
 
   // HTTP server spans are often named by method alone; the route is an attribute.
   const route = String(
