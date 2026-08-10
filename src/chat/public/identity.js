@@ -183,21 +183,47 @@ function renderAudit(entries) {
     rows;
 }
 
+const AUDIT_POLL_MS = 1500;
+
+/**
+ * Polls for new audit entries rather than holding an SSE connection open — same
+ * reasoning as the trace pane: a plain GET has nothing for a proxy or tunnel to
+ * buffer or drop.
+ */
 export function connectAudit() {
-  // Start empty every time the page loads, then accumulate. The server sends one entry
-  // per event rather than the whole tail, so nothing from a previous run reappears.
+  // Start empty every time the page loads, then accumulate. Only entries whose id
+  // wasn't already present on the very first poll count as "new" — same effect as the
+  // old SSE version only ever receiving events from now on.
   renderAudit([]);
 
-  const source = new EventSource("/api/obo/stream");
-  source.onmessage = (event) => {
+  let excludedIds = null;
+
+  async function poll() {
     try {
-      const { entry } = JSON.parse(event.data);
-      if (!entry) return;
-      seen.unshift(entry);
-      if (seen.length > 20) seen.pop();
-      renderAudit(seen);
+      const response = await fetch("/api/obo/recent");
+      const { entries } = await response.json();
+
+      if (!excludedIds) {
+        excludedIds = new Set(entries.map((e) => e.id));
+      } else {
+        // recentAudit() returns newest-first; unshifting in that order would leave
+        // the oldest-of-batch at the front. Reverse first so the newest ends up
+        // nearest the top after all the unshifts.
+        const fresh = entries.filter((e) => !excludedIds.has(e.id)).reverse();
+        for (const entry of fresh) {
+          excludedIds.add(entry.id);
+          seen.unshift(entry);
+        }
+        if (fresh.length > 0) {
+          if (seen.length > 20) seen.length = 20;
+          renderAudit(seen);
+        }
+      }
     } catch {
-      /* a malformed frame shouldn't blank the panel */
+      /* a missed poll just means the next one tries again */
     }
-  };
+    setTimeout(poll, AUDIT_POLL_MS);
+  }
+
+  void poll();
 }

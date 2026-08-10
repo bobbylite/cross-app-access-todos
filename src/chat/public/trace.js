@@ -7,6 +7,8 @@
 
 import { connectAudit, renderRibbon } from "./identity.js";
 
+const POLL_MS = 1500;
+
 const waterfallEl = document.getElementById("waterfall");
 const traceSubEl = document.getElementById("trace-sub");
 const traceTotalEl = document.getElementById("trace-total");
@@ -270,15 +272,37 @@ export function renderTrace(trace) {
     .join("");
 }
 
-/** Subscribes to the collector's live stream. */
+/**
+ * Polls for trace updates rather than holding an SSE connection open. Some reverse
+ * proxies and tunnels buffer or drop long-lived streams in ways that are hard to
+ * diagnose remotely; a plain polled GET has nothing like that to go wrong.
+ */
 export function connectTraces() {
   connectAudit();
-  const source = new EventSource("/api/traces/stream");
-  source.onmessage = (event) => {
+
+  // Whatever's already stored when the page loads is "before this session" — the pane
+  // should only ever show what happens from here on, same as the old SSE version
+  // (which deliberately never replayed history). Excluded permanently, not just on the
+  // first poll, since /api/traces/recent keeps returning them until they age out.
+  let excluded = null;
+
+  async function poll() {
     try {
-      renderTrace(JSON.parse(event.data));
+      const response = await fetch("/api/traces/recent");
+      const { traces } = await response.json();
+
+      if (!excluded) {
+        excluded = new Set(traces.map((t) => t.traceId));
+      } else {
+        for (const trace of traces) {
+          if (!excluded.has(trace.traceId)) renderTrace(trace);
+        }
+      }
     } catch {
-      /* a malformed frame is not worth breaking the pane over */
+      /* a missed poll just means the next one tries again */
     }
-  };
+    setTimeout(poll, POLL_MS);
+  }
+
+  void poll();
 }

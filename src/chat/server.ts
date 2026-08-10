@@ -2,8 +2,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { config } from "../config.js";
-import { auditEvents } from "../todos/audit.js";
-import { ingest, subscribe } from "./collector.js";
+import { auditEvents, recentAudit } from "../todos/audit.js";
+import { ingest, recentTraces, subscribe } from "./collector.js";
 import { beginLogin, completeLogin, oidcConfigured } from "./oidc.js";
 import { clearSession, createSession, publicView, readSession } from "./session.js";
 
@@ -44,6 +44,16 @@ export function createChatApp(agentUrl: string): express.Express {
       res.status(200).json({ partialSuccess: {} });
     },
   );
+
+  /**
+   * Polling fallback for the trace pane. Long-lived SSE connections are the nicer
+   * transport, but some reverse proxies and tunnels buffer or drop them in ways that
+   * are hard to diagnose from here — a plain polled GET has nothing like that to go
+   * wrong. Returns everything currently held; the client decides what's new.
+   */
+  app.get("/api/traces/recent", (_req, res) => {
+    res.json({ traces: recentTraces(40) });
+  });
 
   /** Live traces, pushed as they are assembled. */
   app.get("/api/traces/stream", (req, res) => {
@@ -238,6 +248,11 @@ export function createChatApp(agentUrl: string): express.Express {
    * and "the agent did this for Ryland" is one the target system has to be able to
    * make on its own.
    */
+  /** Polling fallback for the audit log — same reasoning as /api/traces/recent. */
+  app.get("/api/obo/recent", (_req, res) => {
+    res.json({ entries: recentAudit(20) });
+  });
+
   app.get("/api/obo/stream", (req, res) => {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
