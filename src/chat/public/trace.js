@@ -6,6 +6,7 @@
 // called out explicitly beneath the chart.
 
 import { connectAudit, renderRibbon } from "./identity.js";
+import { connectSSE } from "./sse.js";
 
 const waterfallEl = document.getElementById("waterfall");
 const traceSubEl = document.getElementById("trace-sub");
@@ -273,12 +274,11 @@ export function renderTrace(trace) {
 /** Subscribes to the collector's live stream. */
 export function connectTraces() {
   connectAudit();
-  const source = new EventSource("/api/traces/stream");
-  source.onmessage = (event) => {
+  connectSSE("/api/traces/stream", (data) => {
     try {
-      renderTrace(JSON.parse(event.data));
+      renderTrace(JSON.parse(data));
     } catch {
       /* a malformed frame is not worth breaking the pane over */
     }
-  };
+  });
 }
