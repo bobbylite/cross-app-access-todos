@@ -40,3 +40,6 @@ xaaagent/**/node_modules/
 xaaagent/agentcore/.cli/
 xaaagent/agentcore/.env.local
 xaaagent/**/dist/
+
+.env.localBackup
+.env.tunnelBackup
