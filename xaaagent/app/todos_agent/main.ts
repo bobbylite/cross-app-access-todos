@@ -64,6 +64,30 @@ const requestSchema = z.object({
   prompt: z.string().default(''),
 });
 
+/**
+ * `error.message` on a failed `fetch()` is almost always the unhelpful literal string
+ * "fetch failed" — the actual reason (DNS lookup failure, connection refused, a bad
+ * cert, ...) lives one level down in `error.cause`, which the raw message throws away.
+ * Walks the whole cause chain so the real reason ends up in the trace instead of a
+ * dead end.
+ */
+function describeError(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error) {
+      parts.push(current.message);
+      current = current.cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.join(' — caused by: ');
+}
+
 const HISTORY_LIMIT = 128;
 const histories = new Map<string, ModelMessage[]>();
 
@@ -179,8 +203,7 @@ const app = new BedrockAgentCoreApp({
                     `prompt has been shown. Tell them briefly what you'll do once it's done.`
                   );
                 } catch (error) {
-                  const message =
-                    error instanceof Error ? error.message : String(error);
+                  const message = describeError(error);
                   discoverySteps.push({
                     step: 'Discovery failed',
                     detail: message,
@@ -239,7 +262,7 @@ const app = new BedrockAgentCoreApp({
       try {
         granted = await accessForSession(loadXaaConfig(), sessionId, token, scopes);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = describeError(error);
         yield trace({ type: 'chain-failed', detail: message });
         yield { data: `I couldn't get access to the todos app.\n\n${message}` };
         return;
