@@ -5,8 +5,6 @@
 // acting for?* Those two questions get their own furniture — a continuity ribbon across
 // the top, and the resource app's own audit log along the bottom.
 
-import { connectSSE } from "./sse.js";
-
 const ribbonEl = document.getElementById("ribbon");
 const oboEl = document.getElementById("obo");
 
@@ -190,9 +188,10 @@ export function connectAudit() {
   // per event rather than the whole tail, so nothing from a previous run reappears.
   renderAudit([]);
 
-  connectSSE("/api/obo/stream", (data) => {
+  const source = new EventSource("/api/obo/stream");
+  source.onmessage = (event) => {
     try {
-      const { entry } = JSON.parse(data);
+      const { entry } = JSON.parse(event.data);
       if (!entry) return;
       seen.unshift(entry);
       if (seen.length > 20) seen.pop();
@@ -200,5 +199,5 @@ export function connectAudit() {
     } catch {
       /* a malformed frame shouldn't blank the panel */
     }
-  });
+  };
 }
