@@ -11,6 +11,10 @@
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.0",
+    "@ai-sdk/anthropic": "^4.0.0",
+    "@ai-sdk/google": "^4.0.0",
+    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/openai-compatible": "^3.0.0",
     "@aws-sdk/credential-providers": "^3.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@opentelemetry/api": "^1.9.1",
@@ -20,7 +24,7 @@
     "@opentelemetry/resources": "^2.10.0",
     "@opentelemetry/sdk-node": "^0.221.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "ai": "^6.0.0",
+    "ai": "^7.0.0",
     "bedrock-agentcore": "^0.2.4",
     "tsx": "^4.19.0",
     "zod": "^4.4.3"

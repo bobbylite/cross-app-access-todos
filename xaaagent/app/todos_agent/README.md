@@ -23,6 +23,14 @@ Retain this validation when extending the request shape, and pass only prompt te
 | Variable | Required | Description |
 | --- | --- | --- |
 | `LOCAL_DEV` | No | Set to `1` to use `.env.local` instead of AgentCore Identity |
+| `MODEL_PROVIDER` | No | `bedrock` (default), `anthropic`, `openai`, `google`, or `openai-compatible` — see `model/load.ts` |
+| `MODEL_ID` | Depends | Model id for the active provider. Not needed for `bedrock` (falls back to `BEDROCK_MODEL_ID`, then a hardcoded default) |
+| `OPENAI_API_KEY` | If `MODEL_PROVIDER=openai` | Standard OpenAI API key |
+| `ANTHROPIC_API_KEY` | If `MODEL_PROVIDER=anthropic` | Standard Anthropic API key |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | If `MODEL_PROVIDER=google` | Standard Google Generative AI key |
+| `OPENAI_COMPATIBLE_BASE_URL` | If `MODEL_PROVIDER=openai-compatible` | Local runtime's OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, ...) |
+
+See `.example.env.local` for a full commented-out example of each provider.
 
 # Developing locally
 
