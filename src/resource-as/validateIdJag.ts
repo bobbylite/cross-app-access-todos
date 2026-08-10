@@ -152,53 +152,69 @@ async function verifySignature(
   assertion: string,
 ): Promise<{ verified: Awaited<ReturnType<typeof compactVerify>>; how: KeyLookup }> {
   const header = decodeProtectedHeader(assertion) as Record<string, unknown>;
+  const startTime = Date.now();
 
   if (typeof header.kid === "string") {
     try {
+      console.log(`[trace] Attempting signature verification with kid=${header.kid}`);
       return {
         verified: await compactVerify(assertion, pfJwks(), {
           algorithms: ["RS256"],
         }),
         how: "kid",
       };
-    } catch {
+    } catch (err) {
+      console.log(`[trace] kid lookup failed: ${err instanceof Error ? err.message : String(err)}, trying other methods`);
       // A `kid` the remote set can't resolve still deserves the thumbprint path below.
     }
   }
 
   const attempt = async (refresh: boolean) => {
+    const attemptLabel = refresh ? "with JWKS refresh" : "from cache";
+    console.log(`[trace] Fetching candidate keys ${attemptLabel}`);
     const { keys, how, published } = await pfCandidateKeys(header, refresh);
+    console.log(`[trace] Found ${keys.length} candidate key(s) via ${how} method from ${published} published keys`);
+
     if (published === 0) {
       throw new Error(
         `no usable RS256 keys published at ${pfMetadata().jwksUri}`,
       );
     }
-    for (const key of keys) {
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
       try {
+        console.log(`[trace] Trying key ${i + 1}/${keys.length}`);
+        const result = await compactVerify(assertion, key, {
+          algorithms: ["RS256"],
+        });
+        console.log(`[trace] ✓ Signature verified with key ${i + 1}/${keys.length} (${how})`);
         return {
-          verified: await compactVerify(assertion, key, {
-            algorithms: ["RS256"],
-          }),
+          verified: result,
           how,
         };
-      } catch {
+      } catch (err) {
+        console.log(`[trace] Key ${i + 1}/${keys.length} did not verify: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
         // Wrong key of several — keep going.
       }
     }
     return null;
   };
 
+  console.log(`[trace] Starting signature verification (${Date.now() - startTime}ms elapsed)`);
   const found = await attempt(false);
   if (found) return found;
 
+  console.log(`[trace] No key verified on first attempt, forcing JWKS refresh`);
   // Nothing matched. Re-fetch once in case PingFederate rotated since we last looked,
   // then give up.
   const afterRefresh = await attempt(true);
   if (afterRefresh) return afterRefresh;
 
   const { published } = await pfCandidateKeys(header);
+  const elapsed = Date.now() - startTime;
   throw new Error(
-    `no key among the ${published} RSA key(s) published at ${pfMetadata().jwksUri} verifies this assertion`,
+    `no key among the ${published} RSA key(s) published at ${pfMetadata().jwksUri} verifies this assertion (${elapsed}ms)`,
   );
 }
 

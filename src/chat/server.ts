@@ -183,14 +183,20 @@ export function createChatApp(agentUrl: string): express.Express {
       // Attached only when there is one. Its absence is what makes the agent ask.
       if (session) headers.Authorization = `Bearer ${session.idToken}`;
 
+      console.log(`[chat] Forwarding to agent: POST ${agentUrl} (sessionId: ${sessionId}, auth: ${session ? "attached" : "none"})`);
+      const startTime = Date.now();
       const upstream = await fetch(agentUrl, {
         method: "POST",
         headers,
         body: JSON.stringify({ prompt }),
       });
 
+      const elapsed = Date.now() - startTime;
+      console.log(`[chat] Agent response: ${upstream.status} ${upstream.statusText} (${elapsed}ms)`);
+
       if (!upstream.ok || !upstream.body) {
         const detail = await upstream.text().catch(() => "");
+        console.error(`[chat] Agent error: ${upstream.status} - ${detail.slice(0, 300)}`);
         res.write(
           `data: ${JSON.stringify(
             `The agent returned ${upstream.status}. ${detail.slice(0, 300)}`,
@@ -210,6 +216,10 @@ export function createChatApp(agentUrl: string): express.Express {
       res.end();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(`[chat] Failed to reach agent at ${agentUrl}: ${message}`);
+      if (error instanceof Error) {
+        console.error(`[chat] Error: ${error.constructor.name} - ${error.stack}`);
+      }
       res.write(
         `data: ${JSON.stringify(
           `Could not reach the agent at ${agentUrl}. Is 'agentcore dev' running? (${message})`,

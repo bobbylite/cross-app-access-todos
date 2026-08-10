@@ -151,6 +151,10 @@ export function tokenEndpoint(keys: SigningKeys) {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : "";
+      console.error(`[error] Unexpected error in token exchange (trace ${trace.traceId}): ${message}`);
+      if (stack) console.error(`[error] Stack: ${stack}`);
+
       trace.fail("!! unexpected", message, "server_error");
       res.status(500).json({
         error: "server_error",

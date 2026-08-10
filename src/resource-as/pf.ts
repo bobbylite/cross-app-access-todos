@@ -121,41 +121,59 @@ async function fetchKeys(forceRefresh: boolean): Promise<PfKey[]> {
   const fresh = cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
   if (fresh && !forceRefresh) return cache!.keys;
 
-  const response = await fetch(pfMetadata().jwksUri);
-  if (!response.ok) {
-    throw new Error(
-      `Could not fetch ${pfMetadata().jwksUri}: ${response.status} ${response.statusText}`,
-    );
-  }
-  const doc = (await response.json()) as { keys?: Record<string, unknown>[] };
+  const jwksUri = pfMetadata().jwksUri;
+  const startTime = Date.now();
 
-  // Every RSA key, deliberately unfiltered by `alg` or `use`. Those are advisory
-  // metadata, and filtering on them risks discarding the one key that would actually
-  // have verified the assertion.
-  const usable = (doc.keys ?? []).filter((k) => k.kty === "RSA");
+  try {
+    console.log(`[network] Fetching PingFederate JWKS from ${jwksUri}${forceRefresh ? " (forced refresh)" : ""}`);
+    const response = await fetch(jwksUri);
+    const elapsed = Date.now() - startTime;
 
-  const keys: PfKey[] = [];
-  for (const jwk of usable) {
-    try {
-      keys.push({
-        key: (await importJWK(jwk, "RS256")) as CryptoKey,
-        kid: typeof jwk.kid === "string" ? jwk.kid : null,
-        // Derived from x5c when absent, so this works against a JWKS that publishes
-        // the certificate chain but not the thumbprint.
-        x5t:
-          typeof jwk.x5t === "string" ? jwk.x5t : thumbprint(jwk.x5c, "sha1"),
-        x5tS256:
-          typeof jwk["x5t#S256"] === "string"
-            ? (jwk["x5t#S256"] as string)
-            : thumbprint(jwk.x5c, "sha256"),
-      });
-    } catch {
-      // A key we can't import is one we could never have verified against.
+    if (!response.ok) {
+      const body = await response.text().catch(() => "(unable to read body)");
+      throw new Error(
+        `HTTP ${response.status} ${response.statusText} from ${jwksUri} (${elapsed}ms). Body: ${body.slice(0, 200)}`,
+      );
     }
-  }
 
-  cache = { keys, fetchedAt: Date.now() };
-  return keys;
+    const doc = (await response.json()) as { keys?: Record<string, unknown>[] };
+    console.log(`[network] JWKS fetch succeeded in ${elapsed}ms, processing ${doc.keys?.length ?? 0} keys`);
+
+    // Every RSA key, deliberately unfiltered by `alg` or `use`. Those are advisory
+    // metadata, and filtering on them risks discarding the one key that would actually
+    // have verified the assertion.
+    const usable = (doc.keys ?? []).filter((k) => k.kty === "RSA");
+    console.log(`[network] Found ${usable.length} RSA keys`);
+
+    const keys: PfKey[] = [];
+    for (const jwk of usable) {
+      try {
+        keys.push({
+          key: (await importJWK(jwk, "RS256")) as CryptoKey,
+          kid: typeof jwk.kid === "string" ? jwk.kid : null,
+          // Derived from x5c when absent, so this works against a JWKS that publishes
+          // the certificate chain but not the thumbprint.
+          x5t:
+            typeof jwk.x5t === "string" ? jwk.x5t : thumbprint(jwk.x5c, "sha1"),
+          x5tS256:
+            typeof jwk["x5t#S256"] === "string"
+              ? (jwk["x5t#S256"] as string)
+              : thumbprint(jwk.x5c, "sha256"),
+        });
+      } catch (err) {
+        console.log(`[network] Skipped key ${typeof jwk.kid === "string" ? jwk.kid : "(no kid)"}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    cache = { keys, fetchedAt: Date.now() };
+    console.log(`[network] Successfully cached ${keys.length} importable RSA keys`);
+    return keys;
+  } catch (err) {
+    const elapsed = Date.now() - startTime;
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[network] Failed to fetch JWKS from ${jwksUri} after ${elapsed}ms: ${message}`);
+    throw err;
+  }
 }
 
 /**

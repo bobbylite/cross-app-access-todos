@@ -25,22 +25,36 @@ export async function discoverOidc(): Promise<OidcEndpoints> {
   if (endpoints) return endpoints;
 
   const url = config.pf.discoveryUrl;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`OIDC discovery failed: ${response.status} from ${url}`);
-  }
-  const doc = (await response.json()) as Record<string, string>;
+  console.log(`[oidc] Discovering endpoints from ${url}`);
+  const startTime = Date.now();
 
-  if (!doc.authorization_endpoint || !doc.token_endpoint) {
-    throw new Error(`${url} is missing authorization_endpoint or token_endpoint`);
-  }
+  try {
+    const response = await fetch(url);
+    const elapsed = Date.now() - startTime;
 
-  endpoints = {
-    issuer: doc.issuer ?? config.pf.issuer,
-    authorizationEndpoint: doc.authorization_endpoint,
-    tokenEndpoint: doc.token_endpoint,
-  };
-  return endpoints;
+    if (!response.ok) {
+      throw new Error(`OIDC discovery failed: ${response.status} from ${url} (${elapsed}ms)`);
+    }
+
+    const doc = (await response.json()) as Record<string, string>;
+    console.log(`[oidc] Discovery succeeded in ${elapsed}ms`);
+
+    if (!doc.authorization_endpoint || !doc.token_endpoint) {
+      throw new Error(`${url} is missing authorization_endpoint or token_endpoint`);
+    }
+
+    endpoints = {
+      issuer: doc.issuer ?? config.pf.issuer,
+      authorizationEndpoint: doc.authorization_endpoint,
+      tokenEndpoint: doc.token_endpoint,
+    };
+    console.log(`[oidc] Using auth endpoint: ${endpoints.authorizationEndpoint}`);
+    return endpoints;
+  } catch (err) {
+    const elapsed = Date.now() - startTime;
+    console.error(`[oidc] Discovery failed after ${elapsed}ms: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
 }
 
 /** True when enough is configured for a login to be attempted at all. */
@@ -135,6 +149,7 @@ export async function completeLogin(
   }
   pending.delete(state);
 
+  console.log(`[oidc] Exchanging authorization code for ID token`);
   const { tokenEndpoint } = await discoverOidc();
 
   const body = new URLSearchParams({
@@ -154,24 +169,36 @@ export async function completeLogin(
     ).toString("base64")}`;
   }
 
-  const response = await fetch(tokenEndpoint, {
-    method: "POST",
-    headers,
-    body,
-  });
+  const startTime = Date.now();
+  try {
+    console.log(`[oidc] POST ${tokenEndpoint} (with ${config.oidc.clientSecret ? "client secret" : "PKCE only"})`);
+    const response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers,
+      body,
+    });
 
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`PingFederate rejected the code: ${response.status} ${text}`);
+    const elapsed = Date.now() - startTime;
+    const text = await response.text();
+    console.log(`[oidc] Token endpoint response: ${response.status} (${elapsed}ms, ${text.length} bytes)`);
+
+    if (!response.ok) {
+      throw new Error(`PingFederate rejected the code: ${response.status} ${text}`);
+    }
+
+    const payload = JSON.parse(text) as { id_token?: string };
+    if (!payload.id_token) {
+      throw new Error(
+        "PingFederate returned no id_token. Is `openid` in OIDC_SCOPES, and does the " +
+          "client have the OIDC policy attached?",
+      );
+    }
+
+    console.log(`[oidc] ✓ Got ID token, claims: ${JSON.stringify(peek(payload.id_token))}`);
+    return { idToken: payload.id_token, claims: peek(payload.id_token) };
+  } catch (err) {
+    const elapsed = Date.now() - startTime;
+    console.error(`[oidc] Token exchange failed after ${elapsed}ms: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   }
-
-  const payload = JSON.parse(text) as { id_token?: string };
-  if (!payload.id_token) {
-    throw new Error(
-      "PingFederate returned no id_token. Is `openid` in OIDC_SCOPES, and does the " +
-        "client have the OIDC policy attached?",
-    );
-  }
-
-  return { idToken: payload.id_token, claims: peek(payload.id_token) };
 }

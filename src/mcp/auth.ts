@@ -119,8 +119,11 @@ export function bearerAuth(keys: SigningKeys) {
     }
 
     const token = header.slice(7).trim();
+    const tokenPreview = token.length > 50 ? `${token.slice(0, 30)}...${token.slice(-20)}` : token;
+    console.log(`[mcp] Validating access token: ${tokenPreview} (${token.length} bytes)`);
 
     try {
+      console.log(`[mcp] Token validation: checking issuer=${config.resourceAs.issuer}, audience=${config.mcp.resource}`);
       // `audience` is the load-bearing option. A token minted for someone else's MCP
       // server verifies against a different key anyway, but a token minted by *us* for
       // a different resource would pass signature checks — and must still be rejected.
@@ -146,6 +149,7 @@ export function bearerAuth(keys: SigningKeys) {
           typeof payload.client_id === "string" ? payload.client_id : null,
       };
 
+      console.log(`[mcp] ✓ Token verified: sub=${payload.sub}, scopes=[${scopes.join(" ")}]`);
       trace.pass(
         "A. access token",
         `Verified locally — iss=${config.resourceAs.issuer}, aud=${config.mcp.resource}, sub=${String(payload.sub)}, scope=[${scopes.join(" ")}]`,
@@ -153,6 +157,10 @@ export function bearerAuth(keys: SigningKeys) {
       next();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      console.error(`[mcp] ✗ Token validation failed (trace ${trace.traceId}): ${reason}`);
+      if (error instanceof Error) {
+        console.error(`[mcp] Error type: ${error.constructor.name}`);
+      }
       trace.fail("A. access token", `Rejected: ${reason}`, "invalid_token");
       unauthorized(res, `Access token rejected: ${reason}`);
     }
