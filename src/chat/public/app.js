@@ -1,5 +1,8 @@
 import { renderMarkdownLite } from "./markdown.js";
 import { connectTraces } from "./trace.js";
+import { initTheme } from "./theme.js";
+
+initTheme();
 
 // Chat client. Streams SSE from the local proxy, which forwards to the AgentCore
 // runtime. Trace frames are drawn as the auth chain rather than printed as text.

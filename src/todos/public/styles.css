@@ -1,36 +1,54 @@
 /* The todos app. Deliberately looks like an app, not like the protocol console next
-   to it — the contrast is the point when both are on screen. */
+   to it — the contrast is the point when both are on screen.
+
+   Palette pulled from pingidentity.com's own stylesheet (brand red #d20e0f, dark navy
+   #051727, secondary blue #0c5c95) — light and dark are both "Ping-looking", not a
+   separate optional theme bolted on. */
 
 :root {
   color-scheme: light dark;
-  --bg: #f6f7f9;
+  --bg: #fafafd;
   --card: #ffffff;
-  --line: #e3e6ea;
-  --text: #16191d;
-  --muted: #6b7480;
-  --accent: #3b5bdb;
-  --agent: #7048e8;
-  --high: #e03131;
-  --normal: #1971c2;
-  --low: #868e96;
-  --done: #2f9e44;
+  --line: #dee2e6;
+  --text: #051727;
+  --muted: #6c757d;
+  --accent: #d20e0f;
+  --agent: #0c5c95;
+  --high: #d20e0f;
+  --normal: #0c5c95;
+  --low: #6c757d;
+  --done: #198754;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171c;
-    --card: #1c2027;
-    --line: #2b313a;
-    --text: #e8ecf1;
-    --muted: #949eab;
-    --accent: #748ffc;
-    --agent: #b197fc;
-    --high: #ff8787;
-    --normal: #74c0fc;
-    --low: #909aa5;
-    --done: #69db7c;
+  :root:not([data-theme="light"]) {
+    --bg: #051727;
+    --card: #0f1b26;
+    --line: #263746;
+    --text: #fafafd;
+    --muted: #a5bbc3;
+    --accent: #ff5757;
+    --agent: #5fa8e0;
+    --high: #ff6b6b;
+    --normal: #5fa8e0;
+    --low: #a5bbc3;
+    --done: #51cf66;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #051727;
+  --card: #0f1b26;
+  --line: #263746;
+  --text: #fafafd;
+  --muted: #a5bbc3;
+  --accent: #ff5757;
+  --agent: #5fa8e0;
+  --high: #ff6b6b;
+  --normal: #5fa8e0;
+  --low: #a5bbc3;
+  --done: #51cf66;
 }
 
 * {
@@ -91,6 +109,37 @@ h1 {
   gap: 0.5rem;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.theme-switcher {
+  display: flex;
+  gap: 0.2rem;
+  background: var(--line);
+  border-radius: 8px;
+  padding: 0.2rem;
+  border: none;
+}
+
+.theme-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: all 150ms ease;
+}
+
+.theme-btn.active {
+  background: var(--card);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.theme-btn:hover {
+  color: var(--text);
 }
 
 .linkish {

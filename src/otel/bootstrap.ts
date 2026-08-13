@@ -56,7 +56,11 @@ const sdk = new NodeSDK({
       },
       ignoreOutgoingRequestHook: (options) => {
         const path = (options as { path?: string }).path ?? "";
-        return path.startsWith("/v1/traces");
+        // /api/audit: chat polls the resource service for this every 1500ms now that
+        // it's a real cross-container hop instead of an in-process EventEmitter — left
+        // in, that's a one-span orphan trace every tick, scrolling the real one off
+        // screen exactly the way /v1/traces itself already had to be excluded for.
+        return path.startsWith("/v1/traces") || path.startsWith("/api/audit");
       },
     }),
     new ExpressInstrumentation({

@@ -1,38 +1,57 @@
 /* The chat client. Shares the visual language of the todos app and the console so all
-   three can sit on one screen without looking like three different products. */
+   three can sit on one screen without looking like three different products.
+
+   Palette pulled from pingidentity.com's own stylesheet (brand red #d20e0f, dark navy
+   #051727, secondary blue #0c5c95) — light and dark are both "Ping-looking", not a
+   separate optional theme bolted on. */
 
 :root {
   color-scheme: light dark;
-  --bg: #f6f7f9;
+  --bg: #fafafd;
   --card: #ffffff;
-  --line: #e3e6ea;
-  --text: #16191d;
-  --muted: #6b7480;
-  --accent: #3b5bdb;
-  --agent: #7048e8;
-  --ok: #2f9e44;
-  --bad: #e03131;
+  --line: #dee2e6;
+  --text: #051727;
+  --muted: #6c757d;
+  --accent: #d20e0f;
+  --agent: #0c5c95;
+  --ok: #198754;
+  --bad: #dc3545;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --d-agent: #7048e8;
-  --d-identity: #f08c00;
-  --d-resource: #0ca678;
+  --d-agent: #0c5c95;
+  --d-identity: #f37927;
+  --d-resource: #198754;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171c;
-    --card: #1c2027;
-    --line: #2b313a;
-    --text: #e8ecf1;
-    --muted: #949eab;
-    --accent: #748ffc;
-    --agent: #b197fc;
-    --ok: #69db7c;
-    --bad: #ff8787;
-    --d-agent: #b197fc;
-    --d-identity: #ffc078;
-    --d-resource: #38d9a9;
+  :root:not([data-theme="light"]) {
+    --bg: #051727;
+    --card: #0f1b26;
+    --line: #263746;
+    --text: #fafafd;
+    --muted: #a5bbc3;
+    --accent: #ff5757;
+    --agent: #5fa8e0;
+    --ok: #51cf66;
+    --bad: #ff6b6b;
+    --d-agent: #5fa8e0;
+    --d-identity: #ffa94d;
+    --d-resource: #51cf66;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #051727;
+  --card: #0f1b26;
+  --line: #263746;
+  --text: #fafafd;
+  --muted: #a5bbc3;
+  --accent: #ff5757;
+  --agent: #5fa8e0;
+  --ok: #51cf66;
+  --bad: #ff6b6b;
+  --d-agent: #5fa8e0;
+  --d-identity: #ffa94d;
+  --d-resource: #51cf66;
 }
 
 * {
@@ -77,6 +96,12 @@ h1 {
   max-width: 64ch;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .who {
   font-size: 0.8rem;
   color: var(--muted);
@@ -84,6 +109,37 @@ h1 {
 }
 
 .who strong {
+  color: var(--text);
+}
+
+.theme-switcher {
+  display: flex;
+  gap: 0.2rem;
+  background: var(--line);
+  border-radius: 8px;
+  padding: 0.2rem;
+  border: none;
+}
+
+.theme-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: all 150ms ease;
+}
+
+.theme-btn.active {
+  background: var(--card);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.theme-btn:hover {
   color: var(--text);
 }
 
@@ -683,6 +739,7 @@ button:disabled {
   margin-top: 0.8rem;
   border-top: 1px solid var(--line);
   padding-top: 0.7rem;
+  padding-bottom: 0.6rem;
   max-height: 11rem;
   overflow-y: auto;
 }

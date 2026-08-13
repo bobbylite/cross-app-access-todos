@@ -41,5 +41,8 @@ xaaagent/agentcore/.cli/
 xaaagent/agentcore/.env.local
 xaaagent/**/dist/
 
-.env.localBackup
-.env.tunnelBackup
+# Per-service container config — real secrets, only the .env.example templates are
+# committed. deploy/config/.backups holds the config editor's own write-history.
+deploy/.env
+deploy/config/*.env
+deploy/config/.backups/

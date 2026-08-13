@@ -61,6 +61,49 @@ Then import both files in `postman/` and run the folders top to bottom.
 For a walkthrough, put the console and the todos app side by side: the left shows the ten
 checks passing, the right shows the row appearing.
 
+## Containerized deployment
+
+`npm run dev` above still works unchanged — it's the one-process local fallback. For
+independently hostable, independently manageable services (e.g. deploying resource,
+chat, and the agent on separate machines), the same code also runs as four containers:
+
+| service | contains | ports |
+| --- | --- | --- |
+| `resource` | Resource AS + MCP + Todos (share a signing key and a DB, so they stay together) | 8081, 8082 |
+| `chat` | UI, OIDC login, agent proxy, OTLP collector | 8083 |
+| `agent` | LLM agent, XAA token chain, MCP client | 8080 |
+
+```bash
+cp deploy/config/resource.env.example deploy/config/resource.env
+cp deploy/config/chat.env.example deploy/config/chat.env
+cp deploy/config/agent.env.example deploy/config/agent.env
+```
+
+Fill those in manually (see [Configuration](#configuration)), then:
+
+```bash
+docker compose --env-file deploy/.env up -d --build
+```
+
+All three services mount `deploy/config` read-only. To change configuration, edit the
+`.env` files in `deploy/config/` and restart the affected service(s) with `docker compose restart`.
+
+`RESOURCE_AS_ISSUER`/`MCP_RESOURCE` default to `http://resource-as:8081` /
+`http://todos-mcp:8082/mcp` — Docker network aliases the `resource` container answers to,
+so `agent` can reach it by name inside the compose network. To reach the same names from
+a host browser (the `/console` and `/app` links), add one line to `/etc/hosts`:
+
+```
+127.0.0.1 resource-as todos-mcp
+```
+
+The one change this requires outside the repo: PingFederate's registered ID-JAG audience
+must match `RESOURCE_AS_ISSUER` byte-for-byte. If your PF tenant is already configured
+for `http://localhost:8081` (the value `npm run dev` uses), either update that
+registration to `http://resource-as:8081`, or edit `resource.env`/`agent.env` back to the
+`localhost` values through the config editor — both are valid, they just need to agree
+with whatever PF is told to mint.
+
 ## The flow
 
 ```

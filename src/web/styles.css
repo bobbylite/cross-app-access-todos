@@ -1,18 +1,50 @@
-/* Sized for a projector: large type, high contrast, nothing that needs squinting. */
+/* Sized for a projector: large type, high contrast, nothing that needs squinting.
+
+   Palette pulled from pingidentity.com's own stylesheet (brand red #d20e0f, dark navy
+   #051727, secondary blue #0c5c95) — light and dark are both "Ping-looking", not a
+   separate optional theme bolted on. */
 
 :root {
-  color-scheme: dark;
-  --bg: #0c0f14;
-  --panel: #141922;
-  --panel-2: #1b2230;
-  --line: #2a3446;
-  --text: #e6edf6;
-  --muted: #8a99b0;
-  --pass: #3fd08a;
-  --fail: #ff6b6b;
-  --info: #6ea8ff;
-  --accent: #ffc857;
+  color-scheme: light dark;
+  --bg: #fafafd;
+  --panel: #ffffff;
+  --panel-2: #f1f3f5;
+  --line: #dee2e6;
+  --text: #051727;
+  --muted: #6c757d;
+  --pass: #198754;
+  --fail: #dc3545;
+  --info: #0c5c95;
+  --accent: #d20e0f;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #051727;
+    --panel: #0f1b26;
+    --panel-2: #162334;
+    --line: #263746;
+    --text: #fafafd;
+    --muted: #a5bbc3;
+    --pass: #51cf66;
+    --fail: #ff6b6b;
+    --info: #5fa8e0;
+    --accent: #ff5757;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #051727;
+  --panel: #0f1b26;
+  --panel-2: #162334;
+  --line: #263746;
+  --text: #fafafd;
+  --muted: #a5bbc3;
+  --pass: #51cf66;
+  --fail: #ff6b6b;
+  --info: #5fa8e0;
+  --accent: #ff5757;
 }
 
 * {
@@ -91,6 +123,38 @@ button {
 
 button:hover {
   border-color: var(--muted);
+}
+
+.theme-switcher {
+  display: flex;
+  gap: 0.3rem;
+  background: var(--line);
+  border-radius: 6px;
+  padding: 0.2rem;
+  border: none;
+  margin-left: 0.5rem;
+}
+
+.theme-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: all 150ms ease;
+}
+
+.theme-btn.active {
+  background: var(--panel-2);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.theme-btn:hover {
+  color: var(--text);
 }
 
 .config {

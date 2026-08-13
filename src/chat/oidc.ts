@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { config } from "../config.js";
+import { config } from "../config/for-chat.js";
 
 /**
  * OIDC authorization code flow against PingFederate, for the chat client.

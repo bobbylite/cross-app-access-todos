@@ -1,6 +1,9 @@
 // Live console. Subscribes to the Resource AS trace stream and renders each validation
 // step as it arrives, plus the decoded tokens for the most recent successful exchange.
 
+import { initTheme } from "./theme.js";
+initTheme();
+
 const runsEl = document.getElementById("runs");
 const tokensEl = document.getElementById("tokens");
 const configEl = document.getElementById("config");

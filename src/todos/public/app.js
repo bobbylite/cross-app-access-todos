@@ -1,6 +1,9 @@
 // The todos app view. Polls nothing — it re-reads only when the store says something
 // changed, so an agent's tool call shows up here the instant it commits.
 
+import { initTheme } from "./theme.js";
+initTheme();
+
 const peopleEl = document.getElementById("people");
 const boardEl = document.getElementById("board");
 const footerEl = document.getElementById("footer");

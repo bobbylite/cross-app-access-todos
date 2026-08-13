@@ -152,8 +152,10 @@ export function mountTodosApp(app: express.Express): void {
   });
 
   /** The target system's own record of who did what, for whom, under what authority. */
-  app.get("/api/audit", (_req, res) => {
-    res.json({ entries: recentAudit(15) });
+  app.get("/api/audit", (req, res) => {
+    const requested = Number(req.query.limit);
+    const limit = Number.isFinite(requested) ? Math.min(100, Math.max(1, requested)) : 15;
+    res.json({ entries: recentAudit(limit) });
   });
 
   // ---- live updates ---------------------------------------------------------------

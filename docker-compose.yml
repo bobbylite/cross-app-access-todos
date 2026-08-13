@@ -1,0 +1,53 @@
+# Compose does not auto-load deploy/.env (its implicit .env lookup is repo-root only,
+# and the repo root already has its own .env for the non-containerized `npm run dev`
+# path — keeping them separate on purpose, not reusing one for both). Run this file with:
+#   docker compose --env-file deploy/.env up -d
+name: xaa
+
+networks:
+  xaa: {}
+
+volumes:
+  resource-keys: {}
+  todos-data: {}
+
+services:
+  resource:
+    build: { context: ., dockerfile: deploy/node.Dockerfile }
+    command: ["npx", "tsx", "src/services/resource.ts"]
+    environment:
+      NODE_OPTIONS: "--experimental-sqlite --disable-warning=ExperimentalWarning"
+      CONFIG_FILE: /config/resource.env
+    volumes:
+      - resource-keys:/app/keys
+      - todos-data:/app/data
+      - ./deploy/config:/config:ro
+    ports: ["8081:8081", "8082:8082"]
+    networks:
+      xaa:
+        aliases: [resource-as, todos-mcp]
+    restart: unless-stopped
+
+  chat:
+    build: { context: ., dockerfile: deploy/node.Dockerfile }
+    command: ["npx", "tsx", "src/services/chat.ts"]
+    environment:
+      CONFIG_FILE: /config/chat.env
+    volumes:
+      - ./deploy/config:/config:ro
+    ports: ["8083:8083"]
+    networks: [xaa]
+    restart: unless-stopped
+
+  agent:
+    build: { context: ., dockerfile: deploy/agent.Dockerfile }
+    volumes:
+      - ./deploy/config:/config:ro
+      # Only needed when MODEL_PROVIDER=bedrock (or unset). Comment out otherwise —
+      # mounting a nonexistent ~/.aws is harmless either way on most Docker setups,
+      # but avoid it if your platform complains about missing bind sources.
+      - ${HOME}/.aws:/home/node/.aws:ro
+    ports: ["8080:8080"] # published for curl-debugging a turn directly
+    networks: [xaa]
+    depends_on: [resource]
+    restart: unless-stopped

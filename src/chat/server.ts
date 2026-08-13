@@ -1,8 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { config } from "../config.js";
-import { auditEvents, recentAudit } from "../todos/audit.js";
+import { config } from "../config/for-chat.js";
 import { ingest, recentTraces, subscribe } from "./collector.js";
 import { beginLogin, completeLogin, oidcConfigured } from "./oidc.js";
 import { clearSession, createSession, publicView, readSession } from "./session.js";
@@ -240,38 +239,28 @@ export function createChatApp(agentUrl: string): express.Express {
   });
 
   /**
-   * The target system's own log, streamed to the pane.
+   * The target system's own log, polled from the resource service.
    *
-   * Read straight from the todos app's audit table rather than over HTTP — all three
-   * listeners share a process. What matters is that this is the *resource app's*
-   * record, not the agent's telemetry: the distinction between "the agent did this"
-   * and "the agent did this for Ryland" is one the target system has to be able to
-   * make on its own.
+   * Used to read straight from the todos app's audit table via a direct in-process
+   * `EventEmitter` import — that only worked because all three used to share a process.
+   * Now a real HTTP hop to the resource service's own `/api/audit`, matching the same
+   * polling shape `/api/traces/recent` already uses. What matters is that this is the
+   * *resource app's* record, not the agent's telemetry: the distinction between "the
+   * agent did this" and "the agent did this for Ryland" is one the target system has to
+   * be able to make on its own.
    */
-  /** Polling fallback for the audit log — same reasoning as /api/traces/recent. */
-  app.get("/api/obo/recent", (_req, res) => {
-    res.json({ entries: recentAudit(20) });
-  });
-
-  app.get("/api/obo/stream", (req, res) => {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    res.write(": connected\n\n");
-
-    const onAudit = (entry: unknown) => {
-      res.write(`data: ${JSON.stringify({ entry })}\n\n`);
-    };
-    auditEvents.on("audit", onAudit);
-    const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
-
-    req.on("close", () => {
-      clearInterval(heartbeat);
-      auditEvents.off("audit", onAudit);
-    });
+  app.get("/api/obo/recent", async (_req, res) => {
+    try {
+      const upstream = await fetch(`${config.chat.auditUrl}?limit=20`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!upstream.ok) throw new Error(`audit ${upstream.status}`);
+      res.json(await upstream.json());
+    } catch {
+      // A missed poll is a non-event, not an outage — the pane just goes stale until
+      // the next tick succeeds.
+      res.json({ entries: [], stale: true });
+    }
   });
 
   app.get("/api/config", (_req, res) => {
